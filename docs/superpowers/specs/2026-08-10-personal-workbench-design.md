@@ -98,6 +98,7 @@ Supabase 在首版只保留代码接口和说明，不展示可输入密钥的�
 - `semesters`：`Semester`。
 - `courses`：`Course`。
 - `teachers`：`Teacher`。
+- `teacherYearSummaries`：`TeacherYearSummary`，通过教师与年度唯一组合保存年度填报状态。
 - `teacherRecords`：`TeacherRecord`，通过 `teacherId` 和 `year` 关联教师。
 - `mentorships`：`Mentorship`，通过 `teacherId` 和 `academicYear` 关联教师。
 - `researchItems`：`ResearchItem`。
@@ -114,7 +115,7 @@ Repository 负责事务、关联检查和删除策略；领域服务负责教学
 
 表单先通过 Zod 校验，再调用领域服务或 Repository。写入成功后使对应 TanStack Query 缓存失效，并由页面重新读取 IndexedDB。只有数据库事务成功后才显示成功提示。
 
-批量操作必须在单个 IndexedDB 事务中完成：全部成功后统一刷新，任一写入失败则整体回滚。一键补全必须幂等，重复执行不会生成重复占位。课程展开为运行时日历事件，不把每周实例永久写入数据库。
+批量操作必须在单个 IndexedDB 事务中完成：全部成功后统一刷新，任一写入失败则整体回滚。一键补全通过 `TeacherYearSummary` 的教师与年度唯一组合持久化，必须幂等，重复执行不会生成重复占位。课程展开为运行时日历事件，不把每周实例永久写入数据库。
 
 未来同步时以独立记录为同步粒度，不同步 Zustand 界面状态。`updatedAt` 用于检测并发修改；冲突解决界面和用户账户不属于首版本地范围。
 

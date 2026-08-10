@@ -89,6 +89,7 @@ git commit -m "chore: capture legacy static workbench"
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest",
     "test:run": "vitest run",
@@ -212,7 +213,7 @@ git commit -m "feat: scaffold tested React PWA"
 - Create: `src/db/localRepositories.test.ts`, `src/test/database.ts`
 
 **Interfaces:**
-- Produces: `BaseEntity`, `Todo`, `Semester`, `Course`, `Teacher`, `TeacherRecord`, `Mentorship`, `ResearchItem`, `LearningMethod`, `Idea`, `LessonPlan`, `Student`, `StudentRecord`.
+- Produces: `BaseEntity`, `Todo`, `Semester`, `Course`, `Teacher`, `TeacherYearSummary`, `TeacherRecord`, `Mentorship`, `ResearchItem`, `LearningMethod`, `Idea`, `LessonPlan`, `Student`, `StudentRecord`.
 - Produces: `CrudRepository<T, TInput>` with `list()`, `get(id)`, `create(input)`, `put(value)`, `patch(id, patch)`, `delete(id)`; `Repositories` with `transaction(work)`; `createLocalRepositories(db)`.
 - Produces: `WorkbenchDatabase` with versioned tables matching the design specification.
 
@@ -271,6 +272,9 @@ export interface Course extends BaseEntity {
 export interface Teacher extends BaseEntity {
   name: string; department: string; archivedAt: string | null;
 }
+export interface TeacherYearSummary extends BaseEntity {
+  teacherId: string; year: string; state: 'empty' | 'reported';
+}
 export interface TeacherRecord extends BaseEntity {
   teacherId: string; year: string; type: 'work' | 'meeting' | 'material' | 'publicService';
   date: string; title: string; content: string;
@@ -326,6 +330,7 @@ export class WorkbenchDatabase extends Dexie {
   semesters!: Table<Semester, string>;
   courses!: Table<Course, string>;
   teachers!: Table<Teacher, string>;
+  teacherYearSummaries!: Table<TeacherYearSummary, string>;
   teacherRecords!: Table<TeacherRecord, string>;
   mentorships!: Table<Mentorship, string>;
   researchItems!: Table<ResearchItem, string>;
@@ -341,6 +346,7 @@ export class WorkbenchDatabase extends Dexie {
     this.version(1).stores({
       todos: 'id, role, status, startAt, updatedAt', semesters: 'id, isActive',
       courses: 'id, semesterId, weekday, updatedAt', teachers: 'id, name, archivedAt',
+      teacherYearSummaries: 'id, &[teacherId+year], state, updatedAt',
       teacherRecords: 'id, [teacherId+year], type, date',
       mentorships: 'id, [teacherId+academicYear], grade, status',
       researchItems: 'id, status, year, updatedAt', learningMethods: 'id, updatedAt',
@@ -649,18 +655,20 @@ git commit -m "feat: add semester courses and calendar"
 - Create: `src/features/mentorships/{MentorshipPanel,MentorshipForm,MentorshipSummary}.tsx`
 
 **Interfaces:**
-- Produces: `fillMissingTeacherSummaries(year, teachers, records): MissingTeacherSummary[]`.
+- Produces: `fillMissingTeacherSummaries(year, teachers, summaries, repos): Promise<TeacherYearSummary[]>`.
 - Produces: `applyMeetingStatus(ids, meeting, status, repos)` and `addMaterialForTeachers(ids, material, repos)` as atomic operations.
 - Produces: teacher and mentorship exports via Task 10 export helpers.
 
 - [ ] **Step 1: Write failing idempotency and atomic batch tests**
 
 ```ts
-test('returns only active teachers with no annual records', () => {
-  const missing = fillMissingTeacherSummaries('2026',
-    [teacherFixture({ id: 'a' }), teacherFixture({ id: 'b' })],
-    [teacherRecordFixture({ teacherId: 'a', year: '2026' })]);
-  expect(missing.map(x => x.teacherId)).toEqual(['b']);
+test('persists one summary per teacher and year idempotently', async () => {
+  const repos = createTestRepositories();
+  await repos.teachers.create(teacherInput({ id: 'a' }));
+  await repos.teachers.create(teacherInput({ id: 'b' }));
+  await fillMissingTeacherSummaries('2026', await repos.teachers.list(), [], repos);
+  await fillMissingTeacherSummaries('2026', await repos.teachers.list(), await repos.teacherYearSummaries.list(), repos);
+  expect((await repos.teacherYearSummaries.list()).map(x => x.teacherId).sort()).toEqual(['a', 'b']);
 });
 
 test('adds one material record for every selected teacher in one transaction', async () => {
@@ -887,7 +895,8 @@ export const backupSchema = z.object({
   schemaVersion: z.literal(1), exportedAt: z.string().datetime(),
   tables: z.object({
     todos: z.array(todoSchema), semesters: z.array(semesterSchema), courses: z.array(courseSchema),
-    teachers: z.array(teacherSchema), teacherRecords: z.array(teacherRecordSchema),
+    teachers: z.array(teacherSchema), teacherYearSummaries: z.array(teacherYearSummarySchema),
+    teacherRecords: z.array(teacherRecordSchema),
     mentorships: z.array(mentorshipSchema), researchItems: z.array(researchItemSchema),
     learningMethods: z.array(learningMethodSchema), ideas: z.array(ideaSchema),
     lessonPlans: z.array(lessonPlanSchema), students: z.array(studentSchema),
