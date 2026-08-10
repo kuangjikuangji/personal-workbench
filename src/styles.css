@@ -69,6 +69,35 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .reminder-toast { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1rem; border: 1px solid #9db2c9; border-radius: .75rem; color: #182230; background: #fff; box-shadow: 0 12px 32px rgb(24 34 48 / 18%); }
 .reminder-toast p { margin: .35rem 0 0; }
 .reminder-toast button { border: 0; color: #173b67; background: transparent; font-weight: 700; cursor: pointer; }
+.course-form { display: grid; gap: 1rem; }
+.course-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.checkbox-field { display: flex; align-items: center; gap: .5rem; color: #243447; font-weight: 600; }
+.checkbox-field input { width: 1.1rem; height: 1.1rem; }
+.semester-section { display: grid; gap: 1.25rem; }
+.semester-toolbar { display: flex; justify-content: flex-end; }
+.semester-toolbar .field { width: min(100%, 18rem); }
+.semester-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: .75rem; margin: 0; padding: 0; list-style: none; }
+.semester-list li { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1rem; border: 1px solid #d6e0ea; border-radius: .75rem; background: #fff; }
+.semester-list p { margin: .45rem 0 0; color: #526070; }
+.active-semester-badge { display: inline-flex; margin-left: .5rem; padding: .15rem .5rem; border-radius: 999px; color: #166534; background: #dcfce7; font-size: .75rem; font-weight: 700; }
+.course-actions { display: flex; flex-wrap: wrap; gap: .25rem; }
+.course-detail { display: grid; gap: .75rem; margin: 0; }
+.course-detail div { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: 1rem; }
+.course-detail dt { color: #526070; font-weight: 600; }
+.course-detail dd { margin: 0; }
+.calendar-surface { min-width: 0; padding: 1rem; border: 1px solid #d6e0ea; border-radius: .875rem; background: #fff; overflow-x: auto; }
+.calendar-surface .fc { min-width: 42rem; }
+.calendar-surface .fc-toolbar { gap: .75rem; }
+.calendar-surface .fc-toolbar-title { font-size: clamp(1.1rem, 2vw, 1.5rem); }
+.calendar-surface .fc-event { border: 0; cursor: pointer; }
+.calendar-surface .fc-event.role-dean { color: #7c2d12; background: #ffedd5; }
+.calendar-surface .fc-event.role-head { color: #1e40af; background: #dbeafe; }
+.calendar-surface .fc-event.role-personal { color: #166534; background: #dcfce7; }
+.calendar-surface .fc-event.course-event { color: #5b21b6; background: #ede9fe; }
+.calendar-event-content { display: flex; min-width: 0; gap: .3rem; padding: .1rem .25rem; }
+.calendar-event-time { flex: 0 0 auto; font-weight: 700; }
+.calendar-event-title { min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-error { padding: .75rem 1rem; border-radius: .5rem; color: #8a1c13; background: #fee4e2; }
 
 @media (max-width: 767px) {
   .app-shell { display: block; padding-bottom: 72px; }
@@ -79,7 +108,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .management-drawer { align-self: end; width: 100%; max-width: none; border-radius: .875rem .875rem 0 0; }
   .management-drawer .navigation-link { color: #173b67; }
   .page-header { display: grid; }
-  .todo-filters, .todo-form-grid, .todo-board, .wechat-preview-row { grid-template-columns: 1fr; }
+  .todo-filters, .todo-form-grid, .todo-board, .wechat-preview-row, .course-form-grid { grid-template-columns: 1fr; }
   .view-switch { justify-content: stretch; }
   .view-switch .button { flex: 1; }
   .responsive-table { display: block; }
@@ -89,4 +118,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .responsive-table tr { display: grid; gap: .5rem; padding: 1rem; border: 1px solid #d6e0ea; border-radius: 14px; }
   .responsive-table td { display: grid; grid-template-columns: minmax(6rem, .8fr) minmax(0, 1.2fr); gap: 1rem; padding: 0; border: 0; }
   .responsive-table td::before { content: attr(data-label); color: #526070; font-weight: 600; }
+  .semester-list { grid-template-columns: 1fr; }
+  .semester-list li { display: grid; }
+  .calendar-surface { padding: .5rem; }
 }

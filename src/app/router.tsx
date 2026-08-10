@@ -2,6 +2,8 @@ import { Route, Routes } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { navigation } from './navigation';
 import { TodoPage } from '../features/todos/TodoPage';
+import { CalendarPage } from '../features/calendar/CalendarPage';
+import { CoursePage } from '../features/courses/CoursePage';
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -17,7 +19,9 @@ export function AppRouter() {
     <AppShell>
       <Routes>
         <Route element={<TodoPage />} path="/todos" />
-        {navigation.filter((item) => item.to !== '/todos').map((item) => <Route element={<PlaceholderPage title={item.label} />} key={item.to} path={item.to} />)}
+        <Route element={<CalendarPage />} path="/calendar" />
+        <Route element={<CoursePage />} path="/courses" />
+        {navigation.filter((item) => !['/todos', '/calendar', '/courses'].includes(item.to)).map((item) => <Route element={<PlaceholderPage title={item.label} />} key={item.to} path={item.to} />)}
         <Route element={<PlaceholderPage title="页面未找到" />} path="*" />
       </Routes>
     </AppShell>
