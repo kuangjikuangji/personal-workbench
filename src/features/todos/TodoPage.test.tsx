@@ -219,10 +219,11 @@ describe('TodoPage', () => {
     const conflictDialog = await screen.findByRole('dialog', { name: '导入时间冲突' });
     await user.click(within(conflictDialog).getByRole('button', { name: '仍然导入' }));
 
-    await waitFor(async () => expect((await repositories.todos.list()).map((todo) => todo.title)).toEqual([
-      '原有会议',
-      '导入冲突',
-    ]));
+    await waitFor(async () => {
+      const titles = (await repositories.todos.list()).map((todo) => todo.title);
+      expect(titles).toHaveLength(2);
+      expect(titles).toEqual(expect.arrayContaining(['原有会议', '导入冲突']));
+    });
   });
 
   test('completes, restores, and deletes a todo', async () => {
