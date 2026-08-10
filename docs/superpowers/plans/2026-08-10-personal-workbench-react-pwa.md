@@ -96,11 +96,11 @@ git commit -m "chore: capture legacy static workbench"
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@fullcalendar/core": "latest",
-    "@fullcalendar/daygrid": "latest",
-    "@fullcalendar/interaction": "latest",
-    "@fullcalendar/react": "latest",
-    "@fullcalendar/timegrid": "latest",
+    "@fullcalendar/core": "6.1.21",
+    "@fullcalendar/daygrid": "6.1.21",
+    "@fullcalendar/interaction": "6.1.21",
+    "@fullcalendar/react": "6.1.21",
+    "@fullcalendar/timegrid": "6.1.21",
     "@hookform/resolvers": "latest",
     "@tanstack/react-query": "latest",
     "dexie": "latest",
@@ -116,6 +116,7 @@ git commit -m "chore: capture legacy static workbench"
   "devDependencies": {
     "@playwright/test": "latest",
     "@testing-library/jest-dom": "latest",
+    "@testing-library/dom": "latest",
     "@testing-library/react": "latest",
     "@testing-library/user-event": "latest",
     "@types/react": "latest",
