@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { navigation } from './navigation';
+import { TodoPage } from '../features/todos/TodoPage';
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -15,7 +16,8 @@ export function AppRouter() {
   return (
     <AppShell>
       <Routes>
-        {navigation.map((item) => <Route element={<PlaceholderPage title={item.label} />} key={item.to} path={item.to} />)}
+        <Route element={<TodoPage />} path="/todos" />
+        {navigation.filter((item) => item.to !== '/todos').map((item) => <Route element={<PlaceholderPage title={item.label} />} key={item.to} path={item.to} />)}
         <Route element={<PlaceholderPage title="页面未找到" />} path="*" />
       </Routes>
     </AppShell>
