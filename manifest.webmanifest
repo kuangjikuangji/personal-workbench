@@ -1,0 +1,12 @@
+{
+  "name": "个人工作学习工作台",
+  "short_name": "工作台",
+  "description": "院长助理 / 系主任 / 个人待办 / 系室管理 / 科研 / 备课 / 学生管理 一体化工作台",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#f4f6fb",
+  "theme_color": "#2f6fed",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
