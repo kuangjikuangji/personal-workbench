@@ -5,6 +5,7 @@ import { Dialog } from './Dialog';
 type ConfirmDialogProps = {
   cancelLabel?: string;
   children: ReactNode;
+  confirmDisabled?: boolean;
   confirmLabel?: string;
   onClose: () => void;
   onConfirm: () => void;
@@ -13,14 +14,14 @@ type ConfirmDialogProps = {
 };
 
 export function ConfirmDialog({
-  cancelLabel = '取消', children, confirmLabel = '确认', onClose, onConfirm, open, title,
+  cancelLabel = '取消', children, confirmDisabled = false, confirmLabel = '确认', onClose, onConfirm, open, title,
 }: ConfirmDialogProps) {
   return (
     <Dialog open={open} onClose={onClose} title={title}>
       {children}
       <div className="dialog-actions">
         <Button variant="secondary" onClick={onClose}>{cancelLabel}</Button>
-        <Button onClick={onConfirm}>{confirmLabel}</Button>
+        <Button disabled={confirmDisabled} onClick={onConfirm}>{confirmLabel}</Button>
       </div>
     </Dialog>
   );

@@ -1,8 +1,10 @@
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import type { Todo } from '../../domain/entities';
 import { createTestRepositories } from '../../test/database';
 import {
   createReminderCoordinator,
+  ReminderCoordinator,
   type ReminderIdStore,
 } from './ReminderCoordinator';
 
@@ -32,6 +34,45 @@ function memoryStore(initial: string[] = []): ReminderIdStore & { ids: Set<strin
 }
 
 describe('reminder coordinator', () => {
+  test('shows a visible Chinese reminder and records its id when system notifications are unavailable', async () => {
+    const repositories = createTestRepositories();
+    const due = await repositories.todos.create(todoInput({ title: '提交院务会材料' }));
+    const store = memoryStore();
+
+    render(
+      <ReminderCoordinator
+        notificationAdapter={null}
+        now={() => new Date('2026-08-10T09:05:00+08:00')}
+        repositories={repositories}
+        store={store}
+      />,
+    );
+
+    const reminders = await screen.findByRole('region', { name: '待办提醒' });
+    expect(reminders).toHaveTextContent('提交院务会材料');
+    await waitFor(() => expect(store.ids.has(due.id)).toBe(true));
+  });
+
+  test('does not record an id when the in-app reminder UI rejects delivery', async () => {
+    const repositories = createTestRepositories();
+    const due = await repositories.todos.create(todoInput());
+    const store = memoryStore();
+    const showInApp = vi.fn().mockRejectedValue(new Error('UI unavailable'));
+
+    render(
+      <ReminderCoordinator
+        inAppDelivery={showInApp}
+        notificationAdapter={{ permission: 'denied', show: vi.fn() }}
+        now={() => new Date('2026-08-10T09:05:00+08:00')}
+        repositories={repositories}
+        store={store}
+      />,
+    );
+
+    await waitFor(() => expect(showInApp).toHaveBeenCalledWith(due));
+    expect(store.ids.has(due.id)).toBe(false);
+  });
+
   test('catches up overdue reminders when the application starts', async () => {
     const repositories = createTestRepositories();
     const due = await repositories.todos.create(todoInput());

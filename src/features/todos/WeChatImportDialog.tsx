@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRepositories } from '../../app/providers';
 import type { Role } from '../../domain/entities';
 import type { Todo } from '../../domain/entities';
@@ -22,6 +22,7 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
   const [error, setError] = useState('');
   const [conflicts, setConflicts] = useState<ImportConflict[]>([]);
   const [pendingItems, setPendingItems] = useState<ParsedTodo[]>([]);
+  const commitInFlight = useRef(false);
   const checkedRows = rows.filter((row) => row.checked);
   const hasUnconfirmed = checkedRows.some((row) => row.item.needsDateConfirmation);
 
@@ -58,6 +59,8 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
   };
 
   const commitSelected = async (items: ParsedTodo[]) => {
+    if (commitInFlight.current) return;
+    commitInFlight.current = true;
     setImporting(true);
     setError('');
     try {
@@ -73,6 +76,7 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
     } catch {
       setError('导入失败，未写入任何待办');
     } finally {
+      commitInFlight.current = false;
       setImporting(false);
     }
   };
@@ -134,6 +138,7 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
     <ConfirmDialog
       cancelLabel="取消"
       confirmLabel="仍然导入"
+      confirmDisabled={importing}
       onClose={() => { setConflicts([]); setPendingItems([]); }}
       onConfirm={() => { void commitSelected(pendingItems); }}
       open={conflicts.length > 0}

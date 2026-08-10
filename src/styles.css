@@ -65,6 +65,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .wechat-preview-row { display: grid; grid-template-columns: minmax(10rem, 1.5fr) repeat(3, minmax(9rem, 1fr)); gap: .75rem; padding: 1rem; border: 1px solid #d6e0ea; border-radius: .75rem; }
 .preview-check { display: flex; align-items: flex-start; gap: .5rem; }
 .confirmation-needed { grid-column: 1 / -1; margin: 0; color: #b42318; font-weight: 700; }
+.reminder-toasts { position: fixed; z-index: 20; inset: 1rem 1rem auto auto; display: grid; width: min(24rem, calc(100vw - 2rem)); gap: .75rem; }
+.reminder-toast { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1rem; border: 1px solid #9db2c9; border-radius: .75rem; color: #182230; background: #fff; box-shadow: 0 12px 32px rgb(24 34 48 / 18%); }
+.reminder-toast p { margin: .35rem 0 0; }
+.reminder-toast button { border: 0; color: #173b67; background: transparent; font-weight: 700; cursor: pointer; }
 
 @media (max-width: 767px) {
   .app-shell { display: block; padding-bottom: 72px; }

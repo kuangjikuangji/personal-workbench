@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -218,6 +218,39 @@ describe('TodoPage', () => {
 
     const conflictDialog = await screen.findByRole('dialog', { name: '导入时间冲突' });
     await user.click(within(conflictDialog).getByRole('button', { name: '仍然导入' }));
+
+    await waitFor(async () => {
+      const titles = (await repositories.todos.list()).map((todo) => todo.title);
+      expect(titles).toHaveLength(2);
+      expect(titles).toEqual(expect.arrayContaining(['原有会议', '导入冲突']));
+    });
+  });
+
+  test('imports a conflicting WeChat batch only once after a rapid double confirmation', async () => {
+    const repositories = createTestRepositories();
+    await repositories.todos.create(todoFixture());
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <RepositoryProvider repositories={repositories}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter><TodoPage /></MemoryRouter>
+        </QueryClientProvider>
+      </RepositoryProvider>,
+    );
+
+    await screen.findByText('原有会议');
+    await user.click(screen.getByRole('button', { name: '微信文本导入' }));
+    const importDialog = screen.getByRole('dialog', { name: '微信文本导入' });
+    await user.type(within(importDialog).getByLabelText('微信对话文本'), '2026-08-10 09:30-10:30 导入冲突');
+    await user.click(within(importDialog).getByRole('button', { name: '解析预览' }));
+    await user.click(within(importDialog).getByRole('button', { name: '导入选中' }));
+
+    const conflictDialog = await screen.findByRole('dialog', { name: '导入时间冲突' });
+    const confirm = within(conflictDialog).getByRole('button', { name: '仍然导入' });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
 
     await waitFor(async () => {
       const titles = (await repositories.todos.list()).map((todo) => todo.title);
