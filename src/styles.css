@@ -1,0 +1,30 @@
+:root {
+  color: #182230;
+  background: #f5f7fb;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+
+button, input, textarea, select { font: inherit; }
+
+.app-shell { display: grid; grid-template-columns: 17rem minmax(0, 1fr); min-height: 100vh; }
+
+.app-sidebar { padding: 1.5rem; color: #fff; background: #173b67; }
+
+.app-sidebar h1 { margin: 0 0 2rem; font-size: 1.25rem; line-height: 1.4; }
+
+.app-sidebar nav { font-weight: 600; }
+
+main { padding: clamp(1.5rem, 5vw, 3rem); }
+
+main h2 { margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); }
+
+@media (max-width: 720px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .app-sidebar { padding: 1rem 1.25rem; }
+  .app-sidebar h1 { margin-bottom: .75rem; }
+}

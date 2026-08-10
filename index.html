@@ -2,72 +2,13 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#2f6fed" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#173b67" />
   <title>个人工作学习工作台</title>
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="assets/style.css" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 </head>
 <body>
-  <div id="app">
-    <!-- 侧边栏 -->
-    <aside class="sidebar" id="sidebar">
-      <div class="brand">
-        <div class="brand-logo">📋</div>
-        <div class="brand-text">
-          <div class="brand-title">工作台</div>
-          <div class="brand-sub">工作 · 学习 · 管理</div>
-        </div>
-      </div>
-      <nav class="nav" id="nav">
-        <button class="nav-item active" data-view="dashboard"><span class="nav-ico">🏠</span>概览</button>
-        <button class="nav-item" data-view="todos"><span class="nav-ico">✅</span>待办管理</button>
-        <button class="nav-item" data-view="calendar"><span class="nav-ico">📅</span>日历</button>
-        <button class="nav-item" data-view="teachers"><span class="nav-ico">🏛️</span>系室管理</button>
-        <button class="nav-item" data-view="research"><span class="nav-ico">🔬</span>个人科研</button>
-        <button class="nav-item" data-view="ideas"><span class="nav-ico">💡</span>灵感记录</button>
-        <button class="nav-item" data-view="lessons"><span class="nav-ico">📚</span>教学备课</button>
-        <button class="nav-item" data-view="students"><span class="nav-ico">🎓</span>学生管理</button>
-        <button class="nav-item" data-view="courses"><span class="nav-ico">🗓️</span>课表</button>
-        <button class="nav-item" data-view="settings"><span class="nav-ico">⚙️</span>设置 / 同步</button>
-      </nav>
-      <div class="sidebar-foot">
-        <div class="sync-state" id="syncState">本地存储 · 已连接</div>
-      </div>
-    </aside>
-
-    <!-- 主区 -->
-    <main class="main">
-      <header class="topbar">
-        <button class="hamburger" id="hamburger" aria-label="菜单">☰</button>
-        <div class="topbar-title" id="viewTitle">概览</div>
-        <div class="topbar-actions">
-          <button class="btn btn-ghost" id="todayBtn">今天</button>
-        </div>
-      </header>
-      <section class="content" id="content"><!-- 视图渲染区 --></section>
-    </main>
-  </div>
-
-  <!-- 通用弹窗 -->
-  <div class="modal-mask" id="modalMask" hidden>
-    <div class="modal" id="modal">
-      <div class="modal-head">
-        <div class="modal-title" id="modalTitle">标题</div>
-        <button class="modal-close" id="modalClose">×</button>
-      </div>
-      <div class="modal-body" id="modalBody"></div>
-      <div class="modal-foot" id="modalFoot"></div>
-    </div>
-  </div>
-
-  <!-- 轻提示 -->
-  <div class="toast" id="toast" hidden></div>
-
-  <script src="assets/data.js"></script>
-  <script src="assets/export.js"></script>
-  <script src="assets/calendar.js"></script>
-  <script src="assets/store.js"></script>
-  <script src="assets/app.js"></script>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>
