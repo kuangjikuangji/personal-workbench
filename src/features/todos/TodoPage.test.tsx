@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { RepositoryProvider } from '../../app/providers';
 import type { Todo } from '../../domain/entities';
 import { createTestRepositories } from '../../test/database';
@@ -61,6 +61,59 @@ describe('TodoPage', () => {
     expect((await repositories.todos.list()).map((todo) => todo.title)).toContain('审核预算');
   });
 
+  test('uses a fresh repository snapshot when saving before queries finish', async () => {
+    const repositories = createTestRepositories();
+    await repositories.todos.create(todoFixture());
+    const realList = repositories.todos.list.bind(repositories.todos);
+    vi.spyOn(repositories.todos, 'list')
+      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockImplementation(() => realList());
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <RepositoryProvider repositories={repositories}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter><TodoPage /></MemoryRouter>
+        </QueryClientProvider>
+      </RepositoryProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: '新建待办' }));
+    const formDialog = screen.getByRole('dialog', { name: '新建待办' });
+    await user.type(within(formDialog).getByLabelText('标题'), '快速提交');
+    await user.type(within(formDialog).getByLabelText('开始时间'), '2026-08-10T09:30');
+    await user.type(within(formDialog).getByLabelText('结束时间'), '2026-08-10T10:30');
+    await user.click(within(formDialog).getByRole('button', { name: '保存' }));
+
+    expect(await screen.findByRole('dialog', { name: '时间冲突' })).toBeVisible();
+    expect((await realList()).map((todo) => todo.title)).toEqual(['原有会议']);
+  });
+
+  test('blocks saving when the conflict snapshot cannot be read', async () => {
+    const repositories = createTestRepositories();
+    vi.spyOn(repositories.courses, 'list').mockRejectedValue(new Error('read failed'));
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <RepositoryProvider repositories={repositories}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter><TodoPage /></MemoryRouter>
+        </QueryClientProvider>
+      </RepositoryProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: '新建待办' }));
+    const formDialog = screen.getByRole('dialog', { name: '新建待办' });
+    await user.type(within(formDialog).getByLabelText('标题'), '不应保存');
+    await user.type(within(formDialog).getByLabelText('开始时间'), '2026-08-10T09:30');
+    await user.click(within(formDialog).getByRole('button', { name: '保存' }));
+
+    expect(await within(formDialog).findByText('读取日程失败，未保存待办')).toBeVisible();
+    expect(await repositories.todos.list()).toEqual([]);
+  });
+
   test('filters todos and switches between list and board views', async () => {
     const repositories = createTestRepositories();
     await repositories.todos.create(todoFixture({ title: '院长任务', role: 'dean' }));
@@ -109,7 +162,67 @@ describe('TodoPage', () => {
     expect(within(dialog).getByRole('button', { name: '导入选中' })).toBeEnabled();
     await user.click(within(dialog).getByRole('button', { name: '导入选中' }));
 
-    expect(await screen.findByText('下次开会提交预算表')).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '微信文本导入' })).not.toBeInTheDocument());
+    expect(screen.getByText('下次开会提交预算表')).toBeVisible();
+  });
+
+  test('cancels a conflicting WeChat batch without writing any selected row', async () => {
+    const repositories = createTestRepositories();
+    await repositories.todos.create(todoFixture());
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <RepositoryProvider repositories={repositories}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter><TodoPage /></MemoryRouter>
+        </QueryClientProvider>
+      </RepositoryProvider>,
+    );
+
+    await screen.findByText('原有会议');
+    await user.click(screen.getByRole('button', { name: '微信文本导入' }));
+    const importDialog = screen.getByRole('dialog', { name: '微信文本导入' });
+    await user.type(within(importDialog).getByLabelText('微信对话文本'), '2026-08-10 09:30-10:30 导入冲突');
+    await user.click(within(importDialog).getByRole('button', { name: '解析预览' }));
+    await user.click(within(importDialog).getByRole('button', { name: '导入选中' }));
+
+    const conflictDialog = await screen.findByRole('dialog', { name: '导入时间冲突' });
+    expect(within(conflictDialog).getByText('原有会议')).toBeVisible();
+    await user.click(within(conflictDialog).getByRole('button', { name: '取消' }));
+
+    expect(screen.getByRole('dialog', { name: '微信文本导入' })).toBeVisible();
+    expect((await repositories.todos.list()).map((todo) => todo.title)).toEqual(['原有会议']);
+  });
+
+  test('atomically imports a conflicting WeChat batch after explicit override', async () => {
+    const repositories = createTestRepositories();
+    await repositories.todos.create(todoFixture());
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <RepositoryProvider repositories={repositories}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter><TodoPage /></MemoryRouter>
+        </QueryClientProvider>
+      </RepositoryProvider>,
+    );
+
+    await screen.findByText('原有会议');
+    await user.click(screen.getByRole('button', { name: '微信文本导入' }));
+    const importDialog = screen.getByRole('dialog', { name: '微信文本导入' });
+    await user.type(within(importDialog).getByLabelText('微信对话文本'), '2026-08-10 09:30-10:30 导入冲突');
+    await user.click(within(importDialog).getByRole('button', { name: '解析预览' }));
+    await user.click(within(importDialog).getByRole('button', { name: '导入选中' }));
+
+    const conflictDialog = await screen.findByRole('dialog', { name: '导入时间冲突' });
+    await user.click(within(conflictDialog).getByRole('button', { name: '仍然导入' }));
+
+    await waitFor(async () => expect((await repositories.todos.list()).map((todo) => todo.title)).toEqual([
+      '原有会议',
+      '导入冲突',
+    ]));
   });
 
   test('completes, restores, and deletes a todo', async () => {

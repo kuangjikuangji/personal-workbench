@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRepositories } from '../../app/providers';
 import type { TodoInput } from '../../db/repositories';
+import type { Repositories } from '../../db/repositories';
 import { expandCourse } from '../../domain/scheduling';
 import type { Todo } from '../../domain/entities';
 
@@ -29,6 +30,24 @@ export function useTodoSchedule() {
         return semester ? expandCourse(course, semester) : [];
       });
     },
+  });
+}
+
+export async function readTodoConflictSnapshot(repositories: Repositories) {
+  return repositories.transaction(async () => {
+    const [todos, semesters, courses] = await Promise.all([
+      repositories.todos.list(),
+      repositories.semesters.list(),
+      repositories.courses.list(),
+    ]);
+    const activeSemesters = new Map(
+      semesters.filter((semester) => semester.isActive).map((semester) => [semester.id, semester]),
+    );
+    const occurrences = courses.flatMap((course) => {
+      const semester = activeSemesters.get(course.semesterId);
+      return semester ? expandCourse(course, semester) : [];
+    });
+    return { todos, occurrences };
   });
 }
 

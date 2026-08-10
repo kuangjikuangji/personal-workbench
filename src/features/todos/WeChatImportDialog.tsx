@@ -2,12 +2,16 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useRepositories } from '../../app/providers';
 import type { Role } from '../../domain/entities';
+import type { Todo } from '../../domain/entities';
+import { findScheduleConflicts, type ScheduleConflict } from '../../domain/scheduling';
 import { Button } from '../../shared/ui/Button';
+import { ConfirmDialog } from '../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../shared/ui/Dialog';
-import { todoQueryKeys } from './todoQueries';
+import { readTodoConflictSnapshot, todoQueryKeys } from './todoQueries';
 import { parseWeChatText, type ParsedTodo } from './wechatParser';
 
 type PreviewRow = { checked: boolean; item: ParsedTodo };
+type ImportConflict = { candidateTitle: string; conflict: ScheduleConflict };
 
 export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const repositories = useRepositories();
@@ -16,6 +20,8 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
   const [rows, setRows] = useState<PreviewRow[]>([]);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
+  const [conflicts, setConflicts] = useState<ImportConflict[]>([]);
+  const [pendingItems, setPendingItems] = useState<ParsedTodo[]>([]);
   const checkedRows = rows.filter((row) => row.checked);
   const hasUnconfirmed = checkedRows.some((row) => row.item.needsDateConfirmation);
 
@@ -35,15 +41,34 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
     setImporting(true);
     setError('');
     try {
+      const snapshot = await readTodoConflictSnapshot(repositories);
+      const items = checkedRows.map((row) => row.item);
+      const detected = findImportConflicts(items, snapshot.todos, snapshot.occurrences);
+      if (detected.length > 0) {
+        setPendingItems(items);
+        setConflicts(detected);
+        return;
+      }
+      await commitSelected(items);
+    } catch {
+      setError('读取日程或导入失败，未写入任何待办');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const commitSelected = async (items: ParsedTodo[]) => {
+    setImporting(true);
+    setError('');
+    try {
       await repositories.transaction(async () => {
-        for (const { item } of checkedRows) {
-          const { needsDateConfirmation: _confirmation, originalText: _original, ...input } = item;
-          await repositories.todos.create(input);
-        }
+        for (const item of items) await repositories.todos.create(toTodoInput(item));
       });
       await client.invalidateQueries({ queryKey: todoQueryKeys.all });
       setText('');
       setRows([]);
+      setPendingItems([]);
+      setConflicts([]);
       onClose();
     } catch {
       setError('导入失败，未写入任何待办');
@@ -53,6 +78,7 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
   };
 
   return (
+    <>
     <Dialog open={open} onClose={onClose} title="微信文本导入">
       <label className="field" htmlFor="wechat-import-text">
         <span className="field-label">微信对话文本</span>
@@ -105,5 +131,61 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
         <Button disabled={checkedRows.length === 0 || hasUnconfirmed || importing} onClick={() => void importSelected()}>导入选中</Button>
       </div>
     </Dialog>
+    <ConfirmDialog
+      cancelLabel="取消"
+      confirmLabel="仍然导入"
+      onClose={() => { setConflicts([]); setPendingItems([]); }}
+      onConfirm={() => { void commitSelected(pendingItems); }}
+      open={conflicts.length > 0}
+      title="导入时间冲突"
+    >
+      <p>选中待办与以下日程冲突，是否仍然导入？</p>
+      <ul className="conflict-list">
+        {conflicts.map(({ candidateTitle, conflict }, index) => (
+          <li key={`${candidateTitle}-${conflict.kind}-${conflict.id}-${index}`}>
+            <strong>{conflict.title}</strong>
+            <span>与“{candidateTitle}”冲突：{formatDateTime(conflict.start)} – {formatDateTime(conflict.end)}</span>
+          </li>
+        ))}
+      </ul>
+    </ConfirmDialog>
+    </>
   );
+}
+
+function findImportConflicts(
+  items: ParsedTodo[],
+  todos: Todo[],
+  occurrences: Parameters<typeof findScheduleConflicts>[2],
+): ImportConflict[] {
+  const existingOpen = todos.filter((todo) => todo.status === 'open');
+  const priorCandidates: Todo[] = [];
+  const conflicts: ImportConflict[] = [];
+  const timestamp = new Date().toISOString();
+
+  items.forEach((item, index) => {
+    const input = toTodoInput(item);
+    const candidate: Todo = {
+      ...input,
+      sourceType: input.sourceType ?? null,
+      sourceId: input.sourceId ?? null,
+      id: `__wechat_import_${index}`,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const detected = findScheduleConflicts(candidate, [...existingOpen, ...priorCandidates], occurrences);
+    conflicts.push(...detected.map((conflict) => ({ candidateTitle: candidate.title, conflict })));
+    priorCandidates.push(candidate);
+  });
+
+  return conflicts;
+}
+
+function toTodoInput(item: ParsedTodo) {
+  const { needsDateConfirmation: _confirmation, originalText: _original, ...input } = item;
+  return input;
+}
+
+function formatDateTime(value: string) {
+  return value.replace('T', ' ').slice(0, 16);
 }

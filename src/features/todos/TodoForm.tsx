@@ -1,11 +1,12 @@
 import { type FormEvent, useState } from 'react';
+import { useRepositories } from '../../app/providers';
 import type { TodoInput } from '../../db/repositories';
 import type { Role, Todo } from '../../domain/entities';
 import { findScheduleConflicts, type ScheduleConflict } from '../../domain/scheduling';
 import { Button } from '../../shared/ui/Button';
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog';
 import { Field } from '../../shared/ui/Field';
-import { useCreateTodo, useTodoSchedule, useTodos, useUpdateTodo } from './todoQueries';
+import { readTodoConflictSnapshot, useCreateTodo, useUpdateTodo } from './todoQueries';
 
 type TodoFormProps = {
   initial?: Todo;
@@ -29,17 +30,17 @@ export function TodoForm({ initial, defaultStartAt = '', onSaved }: TodoFormProp
   const [errors, setErrors] = useState<string[]>([]);
   const [conflicts, setConflicts] = useState<ScheduleConflict[]>([]);
   const [pendingInput, setPendingInput] = useState<TodoInput | null>(null);
-  const todos = useTodos();
-  const schedule = useTodoSchedule();
+  const [checkingConflicts, setCheckingConflicts] = useState(false);
+  const repositories = useRepositories();
   const createTodo = useCreateTodo();
   const updateTodo = useUpdateTodo();
-  const saving = createTodo.isPending || updateTodo.isPending;
+  const saving = checkingConflicts || createTodo.isPending || updateTodo.isPending;
 
   const update = <K extends keyof FormValues>(key: K, value: FormValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }));
   };
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     const validationErrors: string[] = [];
     if (!values.title.trim()) validationErrors.push('请填写标题');
@@ -65,17 +66,27 @@ export function TodoForm({ initial, defaultStartAt = '', onSaved }: TodoFormProp
       createdAt: initial?.createdAt ?? now,
       updatedAt: initial?.updatedAt ?? now,
     };
+    setCheckingConflicts(true);
+    let snapshot: Awaited<ReturnType<typeof readTodoConflictSnapshot>>;
+    try {
+      snapshot = await readTodoConflictSnapshot(repositories);
+    } catch {
+      setErrors(['读取日程失败，未保存待办']);
+      setCheckingConflicts(false);
+      return;
+    }
+    setCheckingConflicts(false);
     const detected = findScheduleConflicts(
       candidate,
-      (todos.data ?? []).filter((todo) => todo.status === 'open'),
-      schedule.data ?? [],
+      snapshot.todos.filter((todo) => todo.status === 'open'),
+      snapshot.occurrences,
     );
     if (detected.length > 0) {
       setPendingInput(input);
       setConflicts(detected);
       return;
     }
-    void save(input);
+    await save(input);
   };
 
   const save = async (input: TodoInput) => {

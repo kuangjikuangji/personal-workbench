@@ -1,0 +1,104 @@
+import { describe, expect, test, vi } from 'vitest';
+import type { Todo } from '../../domain/entities';
+import { createTestRepositories } from '../../test/database';
+import {
+  createReminderCoordinator,
+  type ReminderIdStore,
+} from './ReminderCoordinator';
+
+function todoInput(overrides: Partial<Omit<Todo, 'id' | 'createdAt' | 'updatedAt'>> = {}) {
+  return {
+    title: '补报待办',
+    description: '',
+    role: 'personal' as const,
+    startAt: null,
+    endAt: null,
+    remindAt: '2026-08-10T09:00:00+08:00',
+    priority: 'normal' as const,
+    status: 'open' as const,
+    sourceType: null,
+    sourceId: null,
+    ...overrides,
+  };
+}
+
+function memoryStore(initial: string[] = []): ReminderIdStore & { ids: Set<string> } {
+  const store = {
+    ids: new Set(initial),
+    load: () => new Set(store.ids),
+    save: (ids: Set<string>) => { store.ids = new Set(ids); },
+  };
+  return store;
+}
+
+describe('reminder coordinator', () => {
+  test('catches up overdue reminders when the application starts', async () => {
+    const repositories = createTestRepositories();
+    const due = await repositories.todos.create(todoInput());
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const store = memoryStore();
+    const coordinator = createReminderCoordinator({
+      repositories,
+      notify,
+      store,
+      now: () => new Date('2026-08-10T09:05:00+08:00'),
+    });
+
+    await coordinator.start();
+
+    expect(notify).toHaveBeenCalledWith(due);
+    expect(store.ids).toEqual(new Set([due.id]));
+    coordinator.stop();
+  });
+
+  test('checks again on visibility restore and at the runtime interval', async () => {
+    const repositories = createTestRepositories();
+    const listTodos = vi.spyOn(repositories.todos, 'list');
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const store = memoryStore();
+    let now = new Date('2026-08-10T08:55:00+08:00');
+    let tick: () => void = () => { throw new Error('interval was not scheduled'); };
+    const coordinator = createReminderCoordinator({
+      repositories,
+      notify,
+      store,
+      now: () => now,
+      intervalMs: 60_000,
+      scheduleInterval: (callback) => { tick = callback; return 1; },
+      cancelInterval: vi.fn(),
+    });
+    await coordinator.start();
+
+    const visibleDue = await repositories.todos.create(todoInput({ title: '恢复时补报' }));
+    now = new Date('2026-08-10T09:05:00+08:00');
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(listTodos).toHaveBeenCalledTimes(2);
+    await coordinator.checkNow();
+    expect(notify).toHaveBeenCalledWith(visibleDue);
+
+    const intervalDue = await repositories.todos.create(todoInput({ title: '定时补报', remindAt: '2026-08-10T09:06:00+08:00' }));
+    now = new Date('2026-08-10T09:07:00+08:00');
+    tick();
+    expect(listTodos).toHaveBeenCalledTimes(3);
+    await coordinator.checkNow();
+    expect(notify).toHaveBeenCalledWith(intervalDue);
+    coordinator.stop();
+  });
+
+  test('does not persist an id when reminder delivery fails', async () => {
+    const repositories = createTestRepositories();
+    const due = await repositories.todos.create(todoInput());
+    const store = memoryStore();
+    const coordinator = createReminderCoordinator({
+      repositories,
+      notify: vi.fn().mockRejectedValue(new Error('delivery failed')),
+      store,
+      now: () => new Date('2026-08-10T09:05:00+08:00'),
+    });
+
+    await expect(coordinator.start()).rejects.toThrow('delivery failed');
+
+    expect(store.ids.has(due.id)).toBe(false);
+    coordinator.stop();
+  });
+});

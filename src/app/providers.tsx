@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { WorkbenchDatabase } from '../db/database';
 import { createLocalRepositories } from '../db/localRepositories';
 import type { Repositories } from '../db/repositories';
+import { ReminderCoordinator } from '../features/todos/ReminderCoordinator';
 
 const defaultRepositories = createLocalRepositories(new WorkbenchDatabase());
 const RepositoryContext = createContext<Repositories | null>(null);
@@ -29,6 +30,7 @@ export function AppProviders({
 
   return (
     <RepositoryProvider repositories={repositories}>
+      <ReminderCoordinator repositories={repositories} />
       <QueryClientProvider client={client}><BrowserRouter>{children}</BrowserRouter></QueryClientProvider>
     </RepositoryProvider>
   );

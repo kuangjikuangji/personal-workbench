@@ -17,10 +17,13 @@ export async function catchUpDueReminders(
   notifiedIds: Set<string>,
   now: Date,
   notify: ReminderNotifier,
+  onNotified?: (ids: Set<string>, todo: Todo) => void | Promise<void>,
 ): Promise<Todo[]> {
   const due = getDueReminders(todos, notifiedIds, now);
   for (const todo of due) {
     await notify(todo);
+    const nextIds = new Set(notifiedIds).add(todo.id);
+    await onNotified?.(nextIds, todo);
     notifiedIds.add(todo.id);
   }
   return due;
