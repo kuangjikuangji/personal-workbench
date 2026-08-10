@@ -386,7 +386,7 @@ test('expands odd teaching weeks when semester starts midweek', () => {
   const semester = semesterFixture({ startDate: '2026-09-03', endDate: '2026-10-31' });
   const course = courseFixture({ weekday: 1, startWeek: 1, endWeek: 5, weekRule: { kind: 'odd' } });
   expect(expandCourse(course, semester).map(x => x.start.slice(0, 10)))
-    .toEqual(['2026-09-07', '2026-09-21', '2026-10-05']);
+    .toEqual(['2026-09-14', '2026-09-28']);
 });
 
 test('reports overlap with both a todo and a course occurrence', () => {
