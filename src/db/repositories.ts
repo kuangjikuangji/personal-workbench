@@ -38,7 +38,7 @@ export interface CrudRepository<T extends BaseEntity, TInput> {
 export interface SettingsRepository {
   list(): Promise<AppSetting[]>;
   get(key: string): Promise<AppSetting | undefined>;
-  put(input: AppSettingInput): Promise<AppSetting>;
+  put(input: AppSettingInput | AppSetting): Promise<AppSetting>;
   delete(key: string): Promise<void>;
 }
 

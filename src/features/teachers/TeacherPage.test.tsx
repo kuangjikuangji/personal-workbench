@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test } from 'vitest';
+import * as XLSX from 'xlsx';
 import { RepositoryProvider } from '../../app/providers';
 import type { Repositories } from '../../db/repositories';
 import { createTestRepositories } from '../../test/database';
@@ -23,6 +24,24 @@ async function seedTeachers(repositories: Repositories, names: string[]) {
   return Promise.all(names.map((name) => repositories.teachers.create({
     name, department: '经济系', archivedAt: null,
   })));
+}
+
+function captureDownload() {
+  let blob: Blob | undefined;
+  let filename = '';
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: (value: Blob) => { blob = value; return 'blob:export'; } });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => undefined });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { filename = this.download; });
+  return { result: () => ({ blob, filename }), restore: () => click.mockRestore() };
+}
+
+function readBlob(blob: Blob): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.readAsArrayBuffer(blob);
+  });
 }
 
 describe('TeacherPage', () => {
@@ -127,5 +146,43 @@ describe('TeacherPage', () => {
     expect(screen.getByText('王同学')).toBeVisible();
     expect(screen.queryByText('赵同学')).not.toBeInTheDocument();
     expect(screen.getByText('共 1 名学生')).toBeVisible();
+  });
+
+  test('exports only the currently filtered mentorship rows as a readable xlsx', async () => {
+    const repositories = createTestRepositories();
+    const [first, second] = await seedTeachers(repositories, ['张老师', '李老师']);
+    await repositories.mentorships.create({ teacherId: first.id, academicYear: '2026', studentName: '王同学', grade: '大三', major: '经济学', topic: '数字经济', status: 'active', notes: '' });
+    await repositories.mentorships.create({ teacherId: second.id, academicYear: '2025', studentName: '赵同学', grade: '大二', major: '金融学', topic: '绿色金融', status: 'planned', notes: '' });
+    const download = captureDownload();
+    const user = userEvent.setup();
+    renderTeacherPage(repositories);
+    await user.click(await screen.findByRole('button', { name: '科研导师汇总' }));
+    await user.selectOptions(screen.getByLabelText('学年筛选'), '2026');
+    await user.click(screen.getByRole('button', { name: '导出导师汇总 XLSX' }));
+
+    const { blob, filename } = download.result();
+    expect(filename).toMatch(/^科研导师汇总-\d{8}\.xlsx$/);
+    const workbook = XLSX.read(await readBlob(blob!));
+    expect(XLSX.utils.sheet_to_json(workbook.Sheets['科研导师汇总'])).toEqual([
+      { 学生姓名: '王同学', 导师姓名: '张老师', 学年: '2026', 年级: '大三', 专业: '经济学', 指导主题: '数字经济', 进展: '进行中' },
+    ]);
+    download.restore();
+  });
+
+  test('exports the current teacher annual summary with stable Chinese columns', async () => {
+    const repositories = createTestRepositories();
+    const [teacher] = await seedTeachers(repositories, ['张老师']);
+    const year = new Date().getFullYear().toString();
+    await repositories.teacherYearSummaries.create({ teacherId: teacher.id, year, state: 'reported' });
+    const download = captureDownload();
+    const user = userEvent.setup();
+    renderTeacherPage(repositories);
+    await user.click(await screen.findByRole('button', { name: '年度记录' }));
+    await user.click(screen.getByRole('button', { name: '导出教师年度汇总 CSV' }));
+
+    const { blob, filename } = download.result();
+    expect(filename).toMatch(new RegExp(`^教师年度汇总-${year}-\\d{8}\\.csv$`));
+    expect(new TextDecoder().decode(await readBlob(blob!))).toContain('教师姓名,系室,年份,填报状态,记录数\r\n张老师,经济系,');
+    download.restore();
   });
 });

@@ -101,7 +101,7 @@ function createSettingsRepository(table: Table<AppSetting, string>): SettingsRep
     list: () => table.toArray(),
     get: (key) => table.get(key),
     async put(input) {
-      const value = { ...input, updatedAt: new Date().toISOString() };
+      const value = { ...input, updatedAt: 'updatedAt' in input ? input.updatedAt : new Date().toISOString() };
       await table.put(value);
       return value;
     },

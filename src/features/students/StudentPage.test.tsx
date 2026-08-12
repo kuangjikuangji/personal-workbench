@@ -3,6 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test } from 'vitest';
+import * as XLSX from 'xlsx';
 import { RepositoryProvider } from '../../app/providers';
 import { createTestRepositories } from '../../test/database';
 import { StudentPage } from './StudentPage';
@@ -81,5 +82,30 @@ describe('StudentPage', () => {
     const summary = screen.getByRole('table', { name: '学生记录汇总' });
     expect(within(summary).getByText('归档学生历史记录')).toBeVisible();
     expect(within(summary).queryByText('在读学生记录')).not.toBeInTheDocument();
+  });
+
+  test('exports only the currently filtered student summary rows', async () => {
+    const repositories = createTestRepositories();
+    const first = await createStudent(repositories, '林同学');
+    const second = await createStudent(repositories, '周同学');
+    await repositories.studentRecords.create({ studentId: first.id, date: '2026-08-10', category: 'task', rating: 'positive', content: '完成数据清理', followUp: '下周复盘', tags: [] });
+    await repositories.studentRecords.create({ studentId: second.id, date: '2026-08-09', category: 'attendance', rating: 'attention', content: '迟到', followUp: '', tags: [] });
+    let blob: Blob | undefined; let filename = '';
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: (value: Blob) => { blob = value; return 'blob:export'; } });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => undefined });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { filename = this.download; });
+    const user = userEvent.setup();
+    renderStudentPage(repositories);
+    await user.click(await screen.findByRole('button', { name: '学生记录汇总' }));
+    await user.selectOptions(screen.getByLabelText('学生筛选'), first.id);
+    await user.click(screen.getByRole('button', { name: '导出学生记录汇总 XLSX' }));
+
+    const reader = new FileReader();
+    const buffer = await new Promise<ArrayBuffer>((resolve, reject) => { reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = () => reject(reader.error); reader.readAsArrayBuffer(blob!); });
+    expect(filename).toMatch(/^学生记录汇总-\d{8}\.xlsx$/);
+    const workbook = XLSX.read(buffer);
+    expect(XLSX.utils.sheet_to_json(workbook.Sheets['学生记录汇总'])).toEqual([
+      { 学生姓名: '林同学', 日期: '2026-08-10', 类别: '任务推进', 等级: '积极', 内容: '完成数据清理', 后续跟进: '下周复盘' },
+    ]);
   });
 });

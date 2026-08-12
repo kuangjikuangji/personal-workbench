@@ -34,4 +34,10 @@ describe('schedule routes', () => {
     renderRoute('/students');
     expect(await screen.findByRole('button', { name: '新增学生' })).toBeVisible();
   });
+
+  test('routes to backup and install settings', async () => {
+    renderRoute('/settings');
+    expect(await screen.findByRole('heading', { name: '备份与恢复' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: '安装应用' })).toBeVisible();
+  });
 });
