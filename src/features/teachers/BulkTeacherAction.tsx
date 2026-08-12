@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react';
+import { useDirtyForm } from '../../app/usePwaUpdate';
 import type { TeacherRecord } from '../../domain/entities';
 import { Button } from '../../shared/ui/Button';
 import { Field } from '../../shared/ui/Field';
@@ -12,6 +13,7 @@ export function BulkTeacherAction({ ids, kind, onSaved }: { ids: string[]; kind:
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<TeacherRecord['status']>(kind === 'meeting' ? 'attended' : 'submitted');
   const saving = meeting.isPending || materials.isPending;
+  useDirtyForm(Boolean(title || notes) || date !== new Date().toISOString().slice(0, 10) || status !== (kind === 'meeting' ? 'attended' : 'submitted'));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!title.trim()) return;

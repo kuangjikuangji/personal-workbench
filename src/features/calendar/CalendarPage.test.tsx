@@ -97,6 +97,17 @@ describe('CalendarPage', () => {
     expect(screen.queryByText('提交学院预算')).not.toBeInTheDocument();
   });
 
+  test('does not show course occurrences from an inactive semester', async () => {
+    const repositories = createTestRepositories();
+    const semester = await repositories.semesters.create({ ...semesterFixture(), isActive: false });
+    await repositories.courses.create(courseFixture(semester.id));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<RepositoryProvider repositories={repositories}><QueryClientProvider client={client}><MemoryRouter><CalendarPage initialDate="2026-09-07" /></MemoryRouter></QueryClientProvider></RepositoryProvider>);
+
+    await screen.findByRole('button', { name: '月' });
+    expect(screen.queryByText('统计学')).not.toBeInTheDocument();
+  });
+
   test('switches between month, week, and day views', async () => {
     const repositories = createTestRepositories();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

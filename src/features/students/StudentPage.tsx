@@ -1,4 +1,5 @@
 import { type FormEvent, useMemo, useRef, useState } from 'react';
+import { useDirtyForm } from '../../app/usePwaUpdate';
 import type { Student } from '../../domain/entities';
 import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
@@ -10,6 +11,7 @@ import { useArchiveStudent, useCreateStudent, useDeleteStudentWithRecords, useSt
 
 function StudentForm({ initial, onSaved }: { initial?: Student; onSaved: () => void }) {
   const create = useCreateStudent(); const update = useUpdateStudent(); const [values, setValues] = useState({ name: initial?.name ?? '', program: initial?.program ?? '', cohort: initial?.cohort ?? '', contact: initial?.contact ?? '', notes: initial?.notes ?? '' });
+  useDirtyForm(JSON.stringify(values) !== JSON.stringify({ name: initial?.name ?? '', program: initial?.program ?? '', cohort: initial?.cohort ?? '', contact: initial?.contact ?? '', notes: initial?.notes ?? '' }));
   const submit = async (event: FormEvent) => { event.preventDefault(); if (!values.name.trim() || !values.program.trim() || !values.cohort.trim()) return; const value = { name: values.name.trim(), program: values.program.trim(), cohort: values.cohort.trim(), contact: values.contact.trim(), notes: values.notes.trim() }; if (initial) await update.mutateAsync({ id: initial.id, patch: value }); else await create.mutateAsync({ ...value, archivedAt: null }); onSaved(); };
   return <form className="course-form" onSubmit={submit}><Field label="学生姓名" required value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} /><Field label="培养项目" required value={values.program} onChange={(event) => setValues({ ...values, program: event.target.value })} /><Field label="年级" required value={values.cohort} onChange={(event) => setValues({ ...values, cohort: event.target.value })} /><Field label="联系方式" value={values.contact} onChange={(event) => setValues({ ...values, contact: event.target.value })} /><label className="field"><span className="field-label">备注</span><textarea value={values.notes} onChange={(event) => setValues({ ...values, notes: event.target.value })} /></label>{(create.isError || update.isError) && <p role="alert">保存失败，请重试。</p>}<div className="dialog-actions"><Button disabled={create.isPending || update.isPending} type="submit">保存</Button></div></form>;
 }

@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react';
+import { useDirtyForm } from '../../app/usePwaUpdate';
 import type { EntityInput } from '../../db/repositories';
 import type { LearningMethod } from '../../domain/entities';
 import { Button } from '../../shared/ui/Button';
@@ -11,6 +12,7 @@ import { useCreateLearningMethod, useDeleteLearningMethod, useLearningMethods, u
 const tags = (value: string) => [...new Set(value.split(/[,，\s]+/).map((tag) => tag.trim()).filter(Boolean))];
 function MethodForm({ initial, onSaved }: { initial?: LearningMethod; onSaved: () => void }) {
   const [values, setValues] = useState({ name: initial?.name ?? '', scenario: initial?.scenario ?? '', steps: initial?.steps ?? '', evaluation: initial?.evaluation ?? '', tags: initial?.tags.join(', ') ?? '' }); const [error, setError] = useState(''); const create = useCreateLearningMethod(); const update = useUpdateLearningMethod();
+  useDirtyForm(JSON.stringify(values) !== JSON.stringify({ name: initial?.name ?? '', scenario: initial?.scenario ?? '', steps: initial?.steps ?? '', evaluation: initial?.evaluation ?? '', tags: initial?.tags.join(', ') ?? '' }));
   const submit = async (e: FormEvent) => { e.preventDefault(); if (!values.name.trim()) { setError('请填写名称'); return; } const input: EntityInput<LearningMethod> = { name: values.name.trim(), scenario: values.scenario.trim(), steps: values.steps.trim(), evaluation: values.evaluation.trim(), tags: tags(values.tags) }; try { if (initial) await update.mutateAsync({ id: initial.id, patch: input }); else await create.mutateAsync(input); onSaved(); } catch { setError('保存失败，请重试'); } };
   return <form className="research-form" onSubmit={submit}><Field label="名称" required value={values.name} onChange={(e) => setValues({ ...values, name: e.target.value })} /><label className="field"><span className="field-label">适用场景</span><textarea value={values.scenario} onChange={(e) => setValues({ ...values, scenario: e.target.value })} /></label><label className="field"><span className="field-label">步骤</span><textarea value={values.steps} onChange={(e) => setValues({ ...values, steps: e.target.value })} /></label><label className="field"><span className="field-label">效果评价</span><textarea value={values.evaluation} onChange={(e) => setValues({ ...values, evaluation: e.target.value })} /></label><Field label="标签" value={values.tags} onChange={(e) => setValues({ ...values, tags: e.target.value })} />{error && <p className="form-errors" role="alert">{error}</p>}<div className="dialog-actions"><Button type="submit">保存</Button></div></form>;
 }

@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react';
+import { useDirtyForm } from '../../app/usePwaUpdate';
 import type { EntityInput } from '../../db/repositories';
 import type { Course, Semester, WeekRule } from '../../domain/entities';
 import { Button } from '../../shared/ui/Button';
@@ -41,6 +42,8 @@ export function CourseForm({ initial, semesters, onSaved }: CourseFormProps) {
   const updateCourse = useUpdateCourse();
   const saving = createCourse.isPending || updateCourse.isPending;
   const selectedSemester = semesters.find((semester) => semester.id === values.semesterId);
+  const initialValues = { semesterId: initial?.semesterId ?? defaultSemester?.id ?? '', name: initial?.name ?? '', location: initial?.location ?? '', teacher: initial?.teacher ?? '', weekday: initial?.weekday ?? 1, startTime: initial?.startTime ?? '08:00', endTime: initial?.endTime ?? '09:30', startWeek: initial?.startWeek ?? 1, endWeek: initial?.endWeek ?? defaultSemester?.totalWeeks ?? 18, notes: initial?.notes ?? '' };
+  useDirtyForm(JSON.stringify({ values, ruleKind, weekText }) !== JSON.stringify({ values: initialValues, ruleKind: initial?.weekRule.kind ?? 'every', weekText: explicitWeeksText(initial?.weekRule) }));
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

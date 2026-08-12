@@ -1,4 +1,5 @@
 import { type FormEvent, useMemo, useState } from 'react';
+import { useDirtyForm } from '../../app/usePwaUpdate';
 import type { Teacher } from '../../domain/entities';
 import { makeCsv, type ExportColumn } from '../../shared/export/csv';
 import { downloadBytes, localDateStamp } from '../../shared/export/download';
@@ -18,6 +19,7 @@ const teacherSummaryColumns: ExportColumn[] = [{ key: 'name', label: '教师姓�
 function TeacherForm({ initial, onSaved }: { initial?: Teacher; onSaved: () => void }) {
   const create = useCreateTeacher(); const update = useUpdateTeacher();
   const [name, setName] = useState(initial?.name ?? ''); const [department, setDepartment] = useState(initial?.department ?? '');
+  useDirtyForm(name !== (initial?.name ?? '') || department !== (initial?.department ?? ''));
   const submit = async (event: FormEvent) => { event.preventDefault(); if (!name.trim() || !department.trim()) return; if (initial) await update.mutateAsync({ id: initial.id, patch: { name: name.trim(), department: department.trim() } }); else await create.mutateAsync({ name: name.trim(), department: department.trim(), archivedAt: null }); onSaved(); };
   return <form className="course-form" onSubmit={submit}><Field label="教师姓名" required value={name} onChange={(event) => setName(event.target.value)} /><Field label="系室" required value={department} onChange={(event) => setDepartment(event.target.value)} />{(create.isError || update.isError) && <p role="alert">保存失败，请重试。</p>}<div className="dialog-actions"><Button disabled={create.isPending || update.isPending} type="submit">保存</Button></div></form>;
 }

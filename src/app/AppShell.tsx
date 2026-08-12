@@ -4,6 +4,7 @@ import { Dialog } from '../shared/ui/Dialog';
 import { Button } from '../shared/ui/Button';
 import { mobileNavigation, navigation, type NavigationItem } from './navigation';
 import { usePwaUpdate } from './usePwaUpdate';
+import './installPromptStore';
 
 function NavigationLink({ item, onNavigate }: { item: NavigationItem; onNavigate?: () => void }) {
   return (

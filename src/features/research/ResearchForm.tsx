@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react';
+import { useDirtyForm } from '../../app/usePwaUpdate';
 import type { ResearchItemInput } from '../../db/repositories';
 import type { ResearchItem } from '../../domain/entities';
 import { Button } from '../../shared/ui/Button';
@@ -12,6 +13,7 @@ export function ResearchForm({ initial, onSaved }: Props) {
   const [values, setValues] = useState({ title: initial?.title ?? '', authors: initial?.authors ?? '', source: initial?.source ?? '', year: initial?.year?.toString() ?? '', urlOrDoi: initial?.urlOrDoi ?? '', tags: initial?.tags.join(', ') ?? '', status: initial?.status ?? 'unread' as ResearchItem['status'], rating: initial?.rating?.toString() ?? '', abstract: initial?.abstract ?? '', notes: initial?.notes ?? '' });
   const [error, setError] = useState('');
   const create = useCreateResearch(); const update = useUpdateResearch(); const saving = create.isPending || update.isPending;
+  useDirtyForm(JSON.stringify(values) !== JSON.stringify({ title: initial?.title ?? '', authors: initial?.authors ?? '', source: initial?.source ?? '', year: initial?.year?.toString() ?? '', urlOrDoi: initial?.urlOrDoi ?? '', tags: initial?.tags.join(', ') ?? '', status: initial?.status ?? 'unread', rating: initial?.rating?.toString() ?? '', abstract: initial?.abstract ?? '', notes: initial?.notes ?? '' }));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!values.title.trim()) { setError('请填写题目'); return; }

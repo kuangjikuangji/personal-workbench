@@ -33,8 +33,34 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .pwa-update-banner p { margin: .25rem 0 0; }
 .pwa-update-banner [role="alert"] { color: #b42318; font-weight: 700; }
 :root[data-theme="dark"] .app-content, :root[data-theme="dark"] .placeholder-page h2 { color: #e9eff7; }
-:root[data-theme="dark"] .summary-card, :root[data-theme="dark"] .dashboard-panel, :root[data-theme="dark"] .settings-panel { color: #e9eff7; border-color: #415167; background: #1f2937; box-shadow: none; }
-:root[data-theme="dark"] .muted, :root[data-theme="dark"] .today-timeline span, :root[data-theme="dark"] .page-header p { color: #b7c4d5; }
+:root[data-theme="dark"] .summary-card,
+:root[data-theme="dark"] .dashboard-panel,
+:root[data-theme="dark"] .settings-panel,
+:root[data-theme="dark"] .dialog,
+:root[data-theme="dark"] .table-wrapper,
+:root[data-theme="dark"] .todo-filters,
+:root[data-theme="dark"] .research-filters,
+:root[data-theme="dark"] .student-filters,
+:root[data-theme="dark"] .semester-list li,
+:root[data-theme="dark"] .calendar-surface,
+:root[data-theme="dark"] .content-cards li,
+:root[data-theme="dark"] .student-record-list li,
+:root[data-theme="dark"] .idea-capture,
+:root[data-theme="dark"] .todo-card,
+:root[data-theme="dark"] .todo-board-column,
+:root[data-theme="dark"] .wechat-preview-row,
+:root[data-theme="dark"] .reminder-toast,
+:root[data-theme="dark"] .pwa-update-banner,
+:root[data-theme="dark"] .empty-state { color: #e9eff7; border-color: #415167; background: #1f2937; box-shadow: none; }
+:root[data-theme="dark"] .dialog-header, :root[data-theme="dark"] .responsive-table th, :root[data-theme="dark"] .responsive-table td { border-color: #415167; }
+:root[data-theme="dark"] .dialog-close, :root[data-theme="dark"] .reminder-toast button { color: #b9d2ec; }
+:root[data-theme="dark"] .field, :root[data-theme="dark"] .checkbox-field { color: #e9eff7; }
+:root[data-theme="dark"] .field input, :root[data-theme="dark"] .field select, :root[data-theme="dark"] .field textarea { color: #e9eff7; border-color: #52647b; background: #111827; }
+:root[data-theme="dark"] .button-secondary { color: #e9eff7; border-color: #6c8099; background: #273449; }
+:root[data-theme="dark"] .button-ghost { color: #b9d2ec; }
+:root[data-theme="dark"] .muted, :root[data-theme="dark"] .today-timeline span, :root[data-theme="dark"] .page-header p, :root[data-theme="dark"] .responsive-table th, :root[data-theme="dark"] .semester-list p, :root[data-theme="dark"] .content-cards p:last-child, :root[data-theme="dark"] .student-record-list span:not(.tag) { color: #b7c4d5; }
+:root[data-theme="dark"] .responsive-table th, :root[data-theme="dark"] .responsive-table td, :root[data-theme="dark"] .today-timeline li { border-color: #415167; }
+:root[data-theme="dark"] .calendar-surface { --fc-border-color: #52647b; --fc-page-bg-color: #1f2937; --fc-neutral-bg-color: #273449; --fc-list-event-hover-bg-color: #273449; }
 :root[data-theme="dark"] .today-timeline time { color: #b9d2ec; }
 .placeholder-page h2 { margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); }
 .placeholder-page p { color: #526070; }
@@ -142,6 +168,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .mobile-nav { position: fixed; z-index: 5; inset: auto 0 0; display: grid; grid-template-columns: repeat(5, 1fr); min-height: 72px; padding: .35rem; border-top: 1px solid #d6e0ea; color: #173b67; background: #fff; box-shadow: 0 -5px 16px rgb(24 34 48 / 8%); }
   .mobile-nav .navigation-link { display: grid; place-items: center; padding: .4rem .2rem; border-radius: .375rem; font-size: .75rem; text-align: center; }
   .mobile-nav .navigation-link.is-active { color: #fff; background: #173b67; }
+  :root[data-theme="dark"] .mobile-nav { color: #e9eff7; border-color: #415167; background: #1f2937; box-shadow: none; }
   .management-drawer { align-self: end; width: 100%; max-width: none; border-radius: .875rem .875rem 0 0; }
   .management-drawer .navigation-link { color: #173b67; }
   .page-header { display: grid; }

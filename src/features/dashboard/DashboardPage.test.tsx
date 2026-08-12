@@ -44,3 +44,14 @@ test('refreshes the overview after a quick-created todo is saved', async () => {
 
   expect(await screen.findByRole('link', { name: /个人\s*1/ })).toBeVisible();
 });
+
+test('does not count course occurrences from an inactive semester', async () => {
+  const repositories = createTestRepositories();
+  const semester = await repositories.semesters.create({ name: '旧学期', startDate: '2026-08-01', endDate: '2026-08-31', totalWeeks: 4, isActive: false });
+  await repositories.courses.create({ semesterId: semester.id, name: '历史课程', location: '', teacher: '', weekday: 1, startTime: '09:00', endTime: '10:00', startWeek: 2, endWeek: 2, weekRule: { kind: 'every' }, notes: '' });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<RepositoryProvider repositories={repositories}><QueryClientProvider client={client}><MemoryRouter><DashboardPage now={() => new Date('2026-08-10T12:00:00+08:00')} /></MemoryRouter></QueryClientProvider></RepositoryProvider>);
+
+  expect(await screen.findByRole('link', { name: /今日课程\s*0/ })).toBeVisible();
+  expect(screen.queryByText('历史课程')).not.toBeInTheDocument();
+});

@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react';
+import { useDirtyForm } from '../../app/usePwaUpdate';
 import type { EntityInput } from '../../db/repositories';
 import type { Semester } from '../../domain/entities';
 import { Button } from '../../shared/ui/Button';
@@ -22,6 +23,7 @@ export function SemesterForm({ initial, onSaved }: SemesterFormProps) {
   const createSemester = useCreateSemester();
   const updateSemester = useUpdateSemester();
   const saving = createSemester.isPending || updateSemester.isPending;
+  useDirtyForm(JSON.stringify(values) !== JSON.stringify({ name: initial?.name ?? '', startDate: initial?.startDate ?? '', endDate: initial?.endDate ?? '', totalWeeks: initial?.totalWeeks ?? 18, isActive: initial?.isActive ?? false }));
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

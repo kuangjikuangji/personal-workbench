@@ -22,7 +22,7 @@ export function toCalendarEvents(todos: Todo[], courses: Course[], semesters: Se
   const courseEvents: WorkbenchCalendarEvent[] = courses.flatMap((course) => {
     const semester = semesters.find((item) => item.id === course.semesterId);
     return semester
-      ? expandCourse(course, semester).map((occurrence) => ({
+      && semester.isActive ? expandCourse(course, semester).map((occurrence) => ({
         ...occurrence,
         classNames: ['course-event'],
         editable: false,
