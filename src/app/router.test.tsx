@@ -24,4 +24,9 @@ describe('schedule routes', () => {
     expect(screen.getByRole('button', { name: '周' })).toBeVisible();
     expect(screen.getByRole('button', { name: '日' })).toBeVisible();
   });
+
+  test('routes to teacher management', async () => {
+    renderRoute('/teachers');
+    expect(await screen.findByRole('heading', { name: '系室管理' })).toBeVisible();
+  });
 });
