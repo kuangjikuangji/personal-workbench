@@ -45,4 +45,22 @@ describe('LessonPage', () => {
     expect(await screen.findByText('原课程已删除')).toBeVisible();
     expect(screen.getByText('第一章提纲')).toBeVisible();
   });
+
+  test('keeps same-named existing courses in separate lesson groups', async () => {
+    const repositories = createTestRepositories();
+    const [firstCourse, secondCourse] = await Promise.all([
+      repositories.courses.create({ semesterId: 'semester-one', name: '数据分析', location: '', teacher: '', weekday: 1, startTime: '08:00', endTime: '09:30', startWeek: 1, endWeek: 18, weekRule: { kind: 'every' }, notes: '' }),
+      repositories.courses.create({ semesterId: 'semester-two', name: '数据分析', location: '', teacher: '', weekday: 2, startTime: '08:00', endTime: '09:30', startWeek: 1, endWeek: 18, weekRule: { kind: 'every' }, notes: '' }),
+    ]);
+    await repositories.lessonPlans.create({ courseId: firstCourse.id, chapter: '第一组章节', objectives: '', outline: '', resources: '', activities: '', plannedDate: null, status: 'notStarted' });
+    await repositories.lessonPlans.create({ courseId: secondCourse.id, chapter: '第二组章节', objectives: '', outline: '', resources: '', activities: '', plannedDate: null, status: 'notStarted' });
+
+    renderLessonPage(repositories);
+
+    const groups = await screen.findAllByRole('region', { name: '数据分析' });
+    expect(groups).toHaveLength(2);
+    expect(within(groups[0]).getByText(/第[一二]组章节/)).toBeVisible();
+    expect(within(groups[1]).getByText(/第[一二]组章节/)).toBeVisible();
+    expect(groups[0]).not.toContainElement(groups[1]);
+  });
 });
