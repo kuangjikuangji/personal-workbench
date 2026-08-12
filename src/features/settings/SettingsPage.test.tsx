@@ -11,11 +11,12 @@ import { SettingsPage } from './SettingsPage';
 
 function renderSettings(repositories: Repositories) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <RepositoryProvider repositories={repositories}>
       <QueryClientProvider client={client}><MemoryRouter><SettingsPage /></MemoryRouter></QueryClientProvider>
     </RepositoryProvider>,
   );
+  return { client, view };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -65,6 +66,54 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('备份恢复成功'));
     expect(events).toEqual(['download', 'transaction']);
     expect(await target.todos.list()).toEqual([expect.objectContaining({ title: '恢复待办' })]);
+  });
+
+  test('removes stale business snapshots after restore so returning pages read restored data', async () => {
+    const source = createTestRepositories();
+    const restoredTodo = await source.todos.create({ title: '恢复待办', description: '', role: 'personal', startAt: null, endAt: null, remindAt: null, priority: 'normal', status: 'open' });
+    const restoredTeacher = await source.teachers.create({ name: '恢复教师', department: '经济系', archivedAt: null });
+    const backup = await exportBackup(source);
+    const target = createTestRepositories();
+    const oldTodo = await target.todos.create({ title: '旧待办', description: '', role: 'head', startAt: null, endAt: null, remindAt: null, priority: 'high', status: 'open' });
+    const oldTeacher = await target.teachers.create({ name: '旧教师', department: '金融系', archivedAt: null });
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:test') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    const { client } = renderSettings(target);
+    client.setQueryData(['todos'], [oldTodo]);
+    client.setQueryData(['teachers'], [oldTeacher]);
+    fireEvent.change(screen.getByLabelText('选择备份文件'), {
+      target: { files: [new File([JSON.stringify(backup)], 'backup.json', { type: 'application/json' })] },
+    });
+
+    await userEvent.setup().click(await screen.findByRole('button', { name: '确认覆盖当前数据' }));
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('备份恢复成功'));
+    expect(client.getQueryData(['todos'])).toBeUndefined();
+    expect(client.getQueryData(['teachers'])).toBeUndefined();
+    await expect(client.fetchQuery({ queryKey: ['todos'], queryFn: () => target.todos.list() })).resolves.toEqual([restoredTodo]);
+    await expect(client.fetchQuery({ queryKey: ['teachers'], queryFn: () => target.teachers.list() })).resolves.toEqual([restoredTeacher]);
+  });
+
+  test('keeps existing query snapshots when restore transaction fails', async () => {
+    const source = createTestRepositories();
+    const backup = await exportBackup(source);
+    const target = createTestRepositories();
+    const oldTodo = await target.todos.create({ title: '保留待办', description: '', role: 'personal', startAt: null, endAt: null, remindAt: null, priority: 'normal', status: 'open' });
+    const repositories: Repositories = { ...target, transaction: async () => { throw new Error('注入失败'); } };
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:test') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    const { client } = renderSettings(repositories);
+    client.setQueryData(['todos'], [oldTodo]);
+    fireEvent.change(screen.getByLabelText('选择备份文件'), {
+      target: { files: [new File([JSON.stringify(backup)], 'backup.json', { type: 'application/json' })] },
+    });
+
+    await userEvent.setup().click(await screen.findByRole('button', { name: '确认覆盖当前数据' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('恢复失败：注入失败'));
+    expect(client.getQueryData(['todos'])).toEqual([oldTodo]);
   });
 
   test('reports an invalid backup without offering destructive confirmation', async () => {

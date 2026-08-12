@@ -1,4 +1,5 @@
 import { type ChangeEvent, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRepositories } from '../../app/providers';
 import { backupTableNames, exportBackup, restoreBackup, validateBackup, type WorkbenchBackupV1 } from '../../db/backup';
 import { Button } from '../../shared/ui/Button';
@@ -17,6 +18,7 @@ function downloadBackup(backup: WorkbenchBackupV1, filename: string) {
 
 export function BackupRestorePanel() {
   const repositories = useRepositories();
+  const queryClient = useQueryClient();
   const [preview, setPreview] = useState<WorkbenchBackupV1 | null>(null);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -51,6 +53,7 @@ export function BackupRestorePanel() {
       const current = await exportBackup(repositories);
       downloadBackup(current, `恢复前完整备份-${localDateStamp()}.json`);
       await restoreBackup(preview, repositories);
+      queryClient.clear();
       setPreview(null);
       setStatus('备份恢复成功。');
     } catch (cause) {
