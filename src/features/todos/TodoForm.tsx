@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react';
+import { useDirtyForm } from '../../app/usePwaUpdate';
 import { useRepositories } from '../../app/providers';
 import type { TodoInput } from '../../db/repositories';
 import type { Role, Todo } from '../../domain/entities';
@@ -35,6 +36,8 @@ export function TodoForm({ initial, defaultStartAt = '', onSaved }: TodoFormProp
   const createTodo = useCreateTodo();
   const updateTodo = useUpdateTodo();
   const saving = checkingConflicts || createTodo.isPending || updateTodo.isPending;
+  const initialValues: FormValues = { title: initial?.title ?? '', description: initial?.description ?? '', role: initial?.role ?? 'personal', startAt: initial?.startAt ?? (defaultStartAt || null), endAt: initial?.endAt ?? null, remindAt: initial?.remindAt ?? null, priority: initial?.priority ?? 'normal', status: initial?.status ?? 'open' };
+  useDirtyForm(JSON.stringify(values) !== JSON.stringify(initialValues));
 
   const update = <K extends keyof FormValues>(key: K, value: FormValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }));

@@ -85,6 +85,18 @@ describe('CalendarPage', () => {
     expect(screen.getByText('09:00')).toBeVisible();
   });
 
+  test('honors a course-only intent from the dashboard summary', async () => {
+    const repositories = createTestRepositories();
+    const semester = await repositories.semesters.create(semesterFixture());
+    await repositories.todos.create(todoFixture());
+    await repositories.courses.create(courseFixture(semester.id));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<RepositoryProvider repositories={repositories}><QueryClientProvider client={client}><MemoryRouter><CalendarPage initialDate="2026-09-07" initialKind="course" /></MemoryRouter></QueryClientProvider></RepositoryProvider>);
+
+    expect(await screen.findByText('统计学')).toBeVisible();
+    expect(screen.queryByText('提交学院预算')).not.toBeInTheDocument();
+  });
+
   test('switches between month, week, and day views', async () => {
     const repositories = createTestRepositories();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

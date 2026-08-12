@@ -1,6 +1,7 @@
 :root { color: #182230; background: #f5f7fb; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; font-synthesis: none; }
+:root[data-theme="dark"] { color: #e9eff7; background: #111827; color-scheme: dark; }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+body { margin: 0; min-width: 320px; min-height: 100vh; color: inherit; background: inherit; }
 button, input, textarea, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 .app-shell { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100dvh; }
@@ -11,6 +12,30 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .navigation-link { display: block; width: 100%; padding: .625rem .75rem; border: 0; border-radius: .5rem; color: inherit; background: transparent; font: inherit; font-weight: 600; text-align: left; text-decoration: none; cursor: pointer; }
 .desktop-sidebar .navigation-link:hover, .desktop-sidebar .navigation-link:focus-visible, .desktop-sidebar .navigation-link.is-active { color: #173b67; background: #fff; outline: 0; }
 .app-content { padding: clamp(1.5rem, 5vw, 3rem); }
+.summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.summary-card { display: grid; gap: .5rem; min-height: 7rem; padding: 1.25rem; border: 1px solid #d6e0ea; border-radius: .875rem; color: #173b67; background: #fff; text-decoration: none; box-shadow: 0 6px 18px rgb(24 34 48 / 6%); }
+.summary-card:hover, .summary-card:focus-visible { border-color: #537ea8; outline: 2px solid #9db2c9; outline-offset: 2px; }
+.summary-card strong { font-size: 2rem; }
+.summary-card-role { min-height: 5rem; }
+.dashboard-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(18rem, 1fr); gap: 1rem; }
+.dashboard-panel, .settings-panel { padding: 1.25rem; border: 1px solid #d6e0ea; border-radius: .875rem; background: #fff; }
+.dashboard-panel h3, .settings-panel h3 { margin-top: 0; }
+.quick-create-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.today-timeline { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.today-timeline li { display: grid; grid-template-columns: 4rem 1fr; gap: .75rem; padding: .75rem 0; border-bottom: 1px solid #e6edf3; }
+.today-timeline li:last-child { border-bottom: 0; }
+.today-timeline time { color: #173b67; font-weight: 700; }
+.today-timeline div { display: grid; gap: .25rem; }
+.today-timeline span, .muted { color: #526070; }
+.settings-panel { margin-bottom: 1rem; }
+.settings-panel .field { max-width: 22rem; }
+.pwa-update-banner { position: fixed; z-index: 8; inset: auto 1rem 1rem auto; display: flex; align-items: center; justify-content: space-between; width: min(42rem, calc(100vw - 2rem)); gap: 1rem; padding: 1rem; border: 1px solid #9db2c9; border-radius: .875rem; color: #182230; background: #fff; box-shadow: 0 16px 38px rgb(24 34 48 / 22%); }
+.pwa-update-banner p { margin: .25rem 0 0; }
+.pwa-update-banner [role="alert"] { color: #b42318; font-weight: 700; }
+:root[data-theme="dark"] .app-content, :root[data-theme="dark"] .placeholder-page h2 { color: #e9eff7; }
+:root[data-theme="dark"] .summary-card, :root[data-theme="dark"] .dashboard-panel, :root[data-theme="dark"] .settings-panel { color: #e9eff7; border-color: #415167; background: #1f2937; box-shadow: none; }
+:root[data-theme="dark"] .muted, :root[data-theme="dark"] .today-timeline span, :root[data-theme="dark"] .page-header p { color: #b7c4d5; }
+:root[data-theme="dark"] .today-timeline time { color: #b9d2ec; }
 .placeholder-page h2 { margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); }
 .placeholder-page p { color: #526070; }
 .mobile-nav { display: none; }
@@ -120,6 +145,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .management-drawer { align-self: end; width: 100%; max-width: none; border-radius: .875rem .875rem 0 0; }
   .management-drawer .navigation-link { color: #173b67; }
   .page-header { display: grid; }
+  .summary-grid, .dashboard-layout, .quick-create-actions { grid-template-columns: 1fr; }
+  .pwa-update-banner { inset: auto 1rem 5.5rem; display: grid; }
   .todo-filters, .todo-form-grid, .todo-board, .wechat-preview-row, .course-form-grid, .research-filters, .research-form-grid, .lesson-form-grid, .student-filters { grid-template-columns: 1fr; }
   .view-switch { justify-content: stretch; }
   .view-switch .button { flex: 1; }

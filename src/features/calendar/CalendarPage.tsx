@@ -16,7 +16,7 @@ import { readTodoConflictSnapshot, useTodos, useUpdateTodo } from '../todos/todo
 import { useCourses, useSemesters } from '../courses/courseQueries';
 import { CalendarEventContent, toCalendarEvents } from './calendarEvents';
 
-type CalendarPageProps = { initialDate?: string };
+type CalendarPageProps = { initialDate?: string; initialKind?: 'course' };
 
 type PendingDrop = {
   conflicts: ScheduleConflict[];
@@ -25,7 +25,7 @@ type PendingDrop = {
   todo: Todo;
 };
 
-export function CalendarPage({ initialDate }: CalendarPageProps) {
+export function CalendarPage({ initialDate, initialKind }: CalendarPageProps) {
   const repositories = useRepositories();
   const todosQuery = useTodos();
   const coursesQuery = useCourses();
@@ -42,7 +42,7 @@ export function CalendarPage({ initialDate }: CalendarPageProps) {
   const todos = todosQuery.data ?? [];
   const courses = coursesQuery.data ?? [];
   const semesters = semestersQuery.data ?? [];
-  const events = useMemo(() => toCalendarEvents(todos, courses, semesters), [courses, semesters, todos]);
+  const events = useMemo(() => toCalendarEvents(todos, courses, semesters).filter((event) => !initialKind || event.extendedProps.kind === initialKind), [courses, initialKind, semesters, todos]);
   const loading = todosQuery.isPending || coursesQuery.isPending || semestersQuery.isPending;
   const loadError = todosQuery.isError || coursesQuery.isError || semestersQuery.isError;
 

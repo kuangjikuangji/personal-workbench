@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { Todo } from '../../domain/entities';
 import { Button } from '../../shared/ui/Button';
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog';
@@ -12,16 +13,23 @@ import { useDeleteTodo, useTodos, useUpdateTodo } from './todoQueries';
 import { WeChatImportDialog } from './WeChatImportDialog';
 
 export function TodoPage() {
+  const [searchParams] = useSearchParams();
   const todosQuery = useTodos();
   const updateTodo = useUpdateTodo();
   const deleteTodo = useDeleteTodo();
-  const [filters, setFilters] = useState<TodoFilterValues>(emptyTodoFilters);
+  const [filters, setFilters] = useState<TodoFilterValues>(() => ({
+    ...emptyTodoFilters,
+    role: parseOption(searchParams.get('role'), ['dean', 'head', 'personal']) ?? 'all',
+    status: parseOption(searchParams.get('status'), ['open', 'done']) ?? 'all',
+    date: searchParams.get('date') ?? '',
+  }));
   const [view, setView] = useState<'list' | 'board'>('list');
   const [editing, setEditing] = useState<Todo | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [wechatOpen, setWechatOpen] = useState(false);
   const [deleting, setDeleting] = useState<Todo | null>(null);
-  const todos = useMemo(() => filterTodos(todosQuery.data ?? [], filters), [filters, todosQuery.data]);
+  const overdueBefore = searchParams.get('due') === 'overdue' ? searchParams.get('before') : null;
+  const todos = useMemo(() => filterTodos(todosQuery.data ?? [], filters).filter((todo) => !overdueBefore || Boolean(todo.startAt && todo.startAt.slice(0, 10) < overdueBefore)), [filters, overdueBefore, todosQuery.data]);
   const actions = {
     onEdit: (todo: Todo) => { setEditing(todo); setFormOpen(true); },
     onDelete: setDeleting,
@@ -73,6 +81,10 @@ export function TodoPage() {
       </ConfirmDialog>
     </section>
   );
+}
+
+function parseOption<T extends string>(value: string | null, options: readonly T[]): T | null {
+  return options.includes(value as T) ? value as T : null;
 }
 
 function filterTodos(todos: Todo[], filters: TodoFilterValues): Todo[] {

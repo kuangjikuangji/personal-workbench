@@ -11,7 +11,7 @@
     "moduleResolution": "Bundler",
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
-    "types": ["vite/client", "vitest/globals"],
+    "types": ["vite/client", "vite-plugin-pwa/react", "vitest/globals"],
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,

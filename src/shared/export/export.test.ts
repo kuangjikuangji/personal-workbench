@@ -23,8 +23,8 @@ describe('tabular exports', () => {
     expect(new TextDecoder().decode(bytes)).toContain('"\u4ed6\u8bf4""\u597d""\n\u4e0b\u6b21\u89c1",');
   });
 
-  test('creates a readable xlsx workbook with stable Chinese headers', () => {
-    const buffer = makeXlsx(
+  test('creates a readable xlsx workbook with stable Chinese headers', async () => {
+    const buffer = await makeXlsx(
       '教师汇总',
       [{ key: 'name', label: '教师姓名' }, { key: 'state', label: '状态' }],
       [{ name: '张老师', state: '已填报' }],

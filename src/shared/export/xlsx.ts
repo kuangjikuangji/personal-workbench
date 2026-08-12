@@ -1,7 +1,7 @@
-import * as XLSX from 'xlsx';
 import type { ExportColumn, ExportRow } from './csv';
 
-export function makeXlsx(sheetName: string, columns: ExportColumn[], rows: ExportRow[]): ArrayBuffer {
+export async function makeXlsx(sheetName: string, columns: ExportColumn[], rows: ExportRow[]): Promise<ArrayBuffer> {
+  const XLSX = await import('xlsx');
   const data = [
     columns.map((column) => column.label),
     ...rows.map((row) => columns.map((column) => row[column.key] ?? '')),

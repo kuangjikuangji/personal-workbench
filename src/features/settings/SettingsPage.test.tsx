@@ -130,6 +130,7 @@ describe('SettingsPage', () => {
     renderSettings(createTestRepositories());
     expect(screen.getByRole('heading', { name: '备份与恢复' })).toBeVisible();
     expect(screen.getByRole('heading', { name: '安装应用' })).toBeVisible();
-    expect(screen.getByText('主题与通知设置将在后续任务中提供。')).toBeVisible();
+    expect(screen.getByRole('heading', { name: '外观与通知' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: '主题' })).toBeVisible();
   });
 });
