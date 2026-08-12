@@ -3,6 +3,7 @@ import type { Repositories } from '../db/repositories';
 import { createTestRepositories } from '../test/database';
 import {
   addMaterialForTeachers,
+  addTeacherRecord,
   applyMeetingStatus,
   fillMissingTeacherSummaries,
   filterMentorships,
@@ -88,6 +89,32 @@ describe('teacher operations', () => {
       { date: '2026-08-10', title: '课程大纲', status: 'submitted', notes: '' },
       repositories,
     )).rejects.toThrow('second write failed');
+
+    expect(await repositories.teacherRecords.list()).toEqual([]);
+    expect(await repositories.teacherYearSummaries.list()).toEqual([]);
+  });
+
+  test('rejects an archived teacher for a single record without writing a record or summary', async () => {
+    const repositories = createTestRepositories();
+    const archived = await createTeacher(repositories, '已离职教师', '2026-01-01T00:00:00.000Z');
+
+    await expect(addTeacherRecord({
+      teacherId: archived.id, year: '2026', type: 'work', date: '2026-08-10', title: '年度考核',
+      content: '', status: 'completed', notes: '',
+    }, repositories)).rejects.toThrow('not active');
+
+    expect(await repositories.teacherRecords.list()).toEqual([]);
+    expect(await repositories.teacherYearSummaries.list()).toEqual([]);
+  });
+
+  test('rejects a batch with archived or missing teachers without writing records or summaries', async () => {
+    const repositories = createTestRepositories();
+    const active = await createTeacher(repositories, '张老师');
+    const archived = await createTeacher(repositories, '已离职教师', '2026-01-01T00:00:00.000Z');
+    const material = { date: '2026-08-10', title: '课程大纲', status: 'submitted' as const, notes: '' };
+
+    await expect(addMaterialForTeachers([active.id, archived.id], material, repositories)).rejects.toThrow('not active');
+    await expect(applyMeetingStatus([active.id, 'missing-teacher'], { date: '2026-08-10', title: '例会', notes: '' }, 'attended', repositories)).rejects.toThrow('not found');
 
     expect(await repositories.teacherRecords.list()).toEqual([]);
     expect(await repositories.teacherYearSummaries.list()).toEqual([]);

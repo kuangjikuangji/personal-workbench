@@ -37,6 +37,15 @@ async function markReported(teacherIds: string[], year: string, repositories: Re
   }
 }
 
+async function requireActiveTeachers(teacherIds: string[], repositories: Repositories) {
+  const teachers = new Map((await repositories.teachers.list()).map((teacher) => [teacher.id, teacher]));
+  for (const teacherId of teacherIds) {
+    const teacher = teachers.get(teacherId);
+    if (!teacher) throw new Error(`Teacher not found: ${teacherId}`);
+    if (teacher.archivedAt !== null) throw new Error(`Teacher is not active: ${teacherId}`);
+  }
+}
+
 export async function fillMissingTeacherSummaries(
   year: string,
   teachers: Teacher[],
@@ -60,6 +69,7 @@ export async function fillMissingTeacherSummaries(
 
 export async function addTeacherRecord(input: EntityInput<TeacherRecord>, repositories: Repositories) {
   return repositories.transaction(async () => {
+    await requireActiveTeachers([input.teacherId], repositories);
     const record = await repositories.teacherRecords.create(input);
     await markReported([input.teacherId], input.year, repositories);
     return record;
@@ -76,6 +86,7 @@ async function addRecords(
   const teacherIds = selectedIds(ids);
   const year = input.date.slice(0, 4);
   return repositories.transaction(async () => {
+    await requireActiveTeachers(teacherIds, repositories);
     const records = await Promise.all(teacherIds.map((teacherId) => repositories.teacherRecords.create({
       teacherId,
       year,

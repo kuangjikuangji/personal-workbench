@@ -98,8 +98,10 @@ describe('TeacherPage', () => {
     await user.type(within(mentorshipDialog).getByLabelText('年级'), '大三');
     await user.type(within(mentorshipDialog).getByLabelText('专业'), '经济学');
     await user.type(within(mentorshipDialog).getByLabelText('指导主题'), '数字经济');
+    await user.type(within(mentorshipDialog).getByLabelText('备注'), '每周五同步论文进展');
     await user.click(within(mentorshipDialog).getByRole('button', { name: '保存' }));
     expect(await within(detail).findByText('王同学')).toBeVisible();
+    expect(within(detail).getByText('备注：每周五同步论文进展')).toBeVisible();
   });
 
   test('filters the mentorship summary by academic year, teacher, grade, and status', async () => {
