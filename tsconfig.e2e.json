@@ -6,7 +6,7 @@
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "types": ["@playwright/test"],
+    "types": ["node", "@playwright/test"],
     "noEmit": true,
     "strict": true,
     "noUnusedLocals": true,

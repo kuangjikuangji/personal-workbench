@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import * as XLSX from 'xlsx';
 import { expect, openManagementRoute, saveDownload, test } from './helpers';
 
 test('records and exports a student performance entry', async ({ page }, testInfo) => {
@@ -22,18 +24,33 @@ test('records and exports a student performance entry', async ({ page }, testInf
   await recordDialog.getByRole('button', { name: '保存' }).click();
   await expect(recordDialog).toBeHidden();
   await expect(detailDialog.getByText('完成数据分析初稿')).toBeVisible();
+
+  await detailDialog.getByRole('button', { name: '添加日常记录' }).click();
+  const secondRecordDialog = page.getByRole('dialog', { name: '添加日常记录' });
+  await secondRecordDialog.getByLabel('类别').selectOption('service');
+  await secondRecordDialog.getByLabel('等级').selectOption('attention');
+  await secondRecordDialog.getByLabel('内容').fill('协作记录需改进');
+  await secondRecordDialog.getByRole('button', { name: '保存' }).click();
+  await expect(secondRecordDialog).toBeHidden();
+  await expect(detailDialog.getByText('协作记录需改进')).toBeVisible();
   await detailDialog.getByRole('button', { name: '关闭' }).first().click();
 
   await page.getByRole('button', { name: '学生记录汇总' }).click();
   await page.getByLabel('类别筛选').selectOption('research');
   await page.getByLabel('等级筛选').selectOption('positive');
   await expect(page.getByRole('row', { name: /陈同学.*科研学习.*积极/ })).toBeVisible();
+  await expect(page.getByText('协作记录需改进')).toBeHidden();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出学生记录汇总 XLSX' }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^学生记录汇总-\d{8}\.xlsx$/);
   const path = testInfo.outputPath(download.suggestedFilename());
   await saveDownload(download, path);
+  const workbook = XLSX.read(await readFile(path));
+  const rows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[workbook.SheetNames[0]]!);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ '学生姓名': '陈同学', '类别': '科研学习', '等级': '积极', '内容': '完成数据分析初稿' });
+  expect(JSON.stringify(rows)).not.toContain('协作记录需改进');
 });
 
 test('keeps research, learning method, idea, and lesson data after reload', async ({ page }) => {

@@ -11,6 +11,8 @@ test('fills teachers, records attendance, and exports mentorship summary', async
   await expect(page.getByRole('dialog', { name: '补全年度记录' })).toContainText('将补全 2 位教师');
   await page.getByRole('button', { name: '确认补全' }).click();
   await expect(page.getByRole('dialog', { name: '补全年度记录' })).toBeHidden();
+  await expect(page.getByRole('row', { name: /选择张老师.*未填报/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /选择李老师.*未填报/ })).toBeVisible();
 
   await page.getByLabel('选择张老师').check();
   await page.getByLabel('选择李老师').check();
@@ -21,8 +23,8 @@ test('fills teachers, records attendance, and exports mentorship summary', async
   await meetingDialog.getByLabel('参会').check();
   await meetingDialog.getByRole('button', { name: '保存 2 条记录' }).click();
   await expect(meetingDialog).toBeHidden();
-  await expect(page.getByRole('row', { name: /选择张老师.*张老师.*参会/ })).toBeVisible();
-  await expect(page.getByRole('row', { name: /选择李老师.*李老师.*参会/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /选择张老师.*已填报.*参会/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /选择李老师.*已填报.*参会/ })).toBeVisible();
 
   await page.getByLabel('选择张老师').check();
   await page.getByLabel('选择李老师').check();

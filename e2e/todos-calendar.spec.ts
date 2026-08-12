@@ -18,11 +18,18 @@ test('todo and odd-week course appear as text and conflict on overlap', async ({
   await page.getByRole('link', { name: '日历', exact: true }).click();
   await expect(page.getByRole('heading', { name: '日历', exact: true })).toBeVisible();
   await page.goto(`/calendar?date=${schedule.courseDate}`);
-  await expect(page.locator('.fc-event').filter({ hasText: '提交预算' }).first()).toBeVisible();
-  await expect(page.locator('.fc-event').filter({ hasText: '统计学' }).first()).toBeVisible();
+  const firstWeekCell = page.locator(`.fc-daygrid-day[data-date="${schedule.courseDate}"]`);
+  await expect(firstWeekCell).toBeVisible();
+  await expect(firstWeekCell.locator('.fc-event').filter({ hasText: '提交预算' })).toBeVisible();
+  await expect(firstWeekCell.locator('.fc-event').filter({ hasText: '统计学' })).toBeVisible();
+  await expect(firstWeekCell.locator('.fc-event').filter({ hasText: '提交预算' }).locator('.calendar-event-time')).toContainText('09:30');
+  await expect(firstWeekCell.locator('.fc-event').filter({ hasText: '统计学' }).locator('.calendar-event-time')).toContainText('09:00');
 
   await page.goto(`/calendar?date=${schedule.secondWeekDate}`);
-  await expect(page.locator('.fc-event').filter({ hasText: '统计学' })).toHaveCount(0);
+  const secondWeekCell = page.locator(`.fc-daygrid-day[data-date="${schedule.secondWeekDate}"]`);
+  await expect(secondWeekCell).toBeVisible();
+  await expect(secondWeekCell.locator('.fc-daygrid-day-events')).toBeVisible();
+  await expect(secondWeekCell.locator('.fc-event').filter({ hasText: '统计学' })).toHaveCount(0);
 });
 
 test('creates todos for all three roles with visible text labels', async ({ page }) => {
