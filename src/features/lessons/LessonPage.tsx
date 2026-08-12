@@ -1,0 +1,15 @@
+import { useMemo, useState } from 'react';
+import type { LessonPlan } from '../../domain/entities';
+import { Button } from '../../shared/ui/Button';
+import { ConfirmDialog } from '../../shared/ui/ConfirmDialog';
+import { Dialog } from '../../shared/ui/Dialog';
+import { EmptyState } from '../../shared/ui/EmptyState';
+import { LessonForm } from './LessonForm';
+import { useDeleteLessonPlan, useLessonCourses, useLessonPlans } from './lessonQueries';
+
+const statusName = { notStarted: '未开始', inProgress: '进行中', done: '已完成' };
+export function LessonPage() {
+  const plansQuery = useLessonPlans(); const coursesQuery = useLessonCourses(); const remove = useDeleteLessonPlan(); const [editing, setEditing] = useState<LessonPlan | null>(null); const [open, setOpen] = useState(false); const [deleting, setDeleting] = useState<LessonPlan | null>(null); const courses = coursesQuery.data ?? []; const grouped = useMemo(() => { const names = new Map(courses.map((course) => [course.id, course.name])); const groups = new Map<string, LessonPlan[]>(); for (const plan of plansQuery.data ?? []) { const key = plan.courseId ? (names.get(plan.courseId) ?? '原课程已删除') : '未关联课程'; groups.set(key, [...(groups.get(key) ?? []), plan]); } return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)); }, [courses, plansQuery.data]); const close = () => { setOpen(false); setEditing(null); };
+  const loading = plansQuery.isPending || coursesQuery.isPending; const error = plansQuery.isError || coursesQuery.isError;
+  return <section className="lesson-page" aria-labelledby="lesson-page-title"><header className="page-header"><div><h2 id="lesson-page-title">教学备课</h2><p>按课程组织教学目标、资源和课堂活动。</p></div><Button onClick={() => { setEditing(null); setOpen(true); }}>新建备课</Button></header>{loading && <p role="status">正在加载备课内容……</p>}{error && <p role="alert">备课内容加载失败，请刷新后重试。</p>}{!loading && !error && grouped.length === 0 && <EmptyState title="暂无备课内容" description="建立第一份备课计划。" />}{grouped.map(([courseName, plans]) => <section className="lesson-group" key={courseName}><h3>{courseName}</h3><ul className="content-cards">{plans.sort((a, b) => (a.plannedDate ?? '9999').localeCompare(b.plannedDate ?? '9999')).map((plan) => <li key={plan.id}><div><h4>{plan.chapter || '未命名章节'}</h4><p>{plan.outline || '未填写内容提纲'}</p><p><span className="status-badge">{statusName[plan.status]}</span>{plan.plannedDate && ` · ${plan.plannedDate}`}</p></div><div className="card-actions"><Button aria-label={`编辑${plan.chapter || '备课'}`} variant="ghost" onClick={() => { setEditing(plan); setOpen(true); }}>编辑</Button><Button aria-label={`删除${plan.chapter || '备课'}`} variant="ghost" onClick={() => setDeleting(plan)}>删除</Button></div></li>)}</ul></section>)}<Dialog open={open} onClose={close} title={editing ? '编辑备课' : '新建备课'}><LessonForm courses={courses} initial={editing ?? undefined} onSaved={close} /></Dialog><ConfirmDialog confirmLabel="删除" onClose={() => setDeleting(null)} onConfirm={() => deleting && remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })} open={!!deleting} title="删除备课"><p>确定删除这条备课记录吗？</p></ConfirmDialog></section>;
+}

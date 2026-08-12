@@ -5,6 +5,9 @@ import { TodoPage } from '../features/todos/TodoPage';
 import { CalendarPage } from '../features/calendar/CalendarPage';
 import { CoursePage } from '../features/courses/CoursePage';
 import { TeacherPage } from '../features/teachers/TeacherPage';
+import { ResearchPage } from '../features/research/ResearchPage';
+import { IdeaPage } from '../features/ideas/IdeaPage';
+import { LessonPage } from '../features/lessons/LessonPage';
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -23,7 +26,10 @@ export function AppRouter() {
         <Route element={<CalendarPage />} path="/calendar" />
         <Route element={<CoursePage />} path="/courses" />
         <Route element={<TeacherPage />} path="/teachers" />
-        {navigation.filter((item) => !['/todos', '/calendar', '/courses', '/teachers'].includes(item.to)).map((item) => <Route element={<PlaceholderPage title={item.label} />} key={item.to} path={item.to} />)}
+        <Route element={<ResearchPage />} path="/research" />
+        <Route element={<IdeaPage />} path="/ideas" />
+        <Route element={<LessonPage />} path="/lessons" />
+        {navigation.filter((item) => !['/todos', '/calendar', '/courses', '/teachers', '/research', '/ideas', '/lessons'].includes(item.to)).map((item) => <Route element={<PlaceholderPage title={item.label} />} key={item.to} path={item.to} />)}
         <Route element={<PlaceholderPage title="页面未找到" />} path="*" />
       </Routes>
     </AppShell>
