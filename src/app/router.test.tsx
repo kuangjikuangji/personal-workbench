@@ -29,4 +29,9 @@ describe('schedule routes', () => {
     renderRoute('/teachers');
     expect(await screen.findByRole('heading', { name: '系室管理' })).toBeVisible();
   });
+
+  test('routes to student management', async () => {
+    renderRoute('/students');
+    expect(await screen.findByRole('button', { name: '新增学生' })).toBeVisible();
+  });
 });

@@ -1,14 +1,15 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type PropsWithChildren, useEffect, useId, useRef } from 'react';
+import { type KeyboardEvent as ReactKeyboardEvent, type PropsWithChildren, type RefObject, useEffect, useId, useRef } from 'react';
 
 type DialogProps = PropsWithChildren<{
   className?: string;
   closeDisabled?: boolean;
+  initialFocusRef?: RefObject<HTMLElement | null>;
   open: boolean;
   onClose: () => void;
   title: string;
 }>;
 
-export function Dialog({ children, className = '', closeDisabled = false, open, onClose, title }: DialogProps) {
+export function Dialog({ children, className = '', closeDisabled = false, initialFocusRef, open, onClose, title }: DialogProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -32,7 +33,7 @@ export function Dialog({ children, className = '', closeDisabled = false, open, 
       if (event.key === 'Escape' && !closeDisabledRef.current) onCloseRef.current();
     };
     document.addEventListener('keydown', closeOnEscape);
-    closeButtonRef.current?.focus();
+    (initialFocusRef?.current ?? closeButtonRef.current)?.focus();
 
     return () => {
       document.removeEventListener('keydown', closeOnEscape);
