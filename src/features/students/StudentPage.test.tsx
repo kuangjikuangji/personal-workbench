@@ -62,4 +62,24 @@ describe('StudentPage', () => {
     expect((await repositories.students.get(student.id))?.archivedAt).not.toBeNull();
     expect(await repositories.studentRecords.list()).toHaveLength(1);
   });
+
+  test('keeps archived students available in summary filters with their historical records', async () => {
+    const repositories = createTestRepositories();
+    const archived = await createStudent(repositories, '林同学');
+    const active = await createStudent(repositories, '周同学');
+    await repositories.students.patch(archived.id, { archivedAt: '2026-08-10T00:00:00.000Z' });
+    await repositories.studentRecords.create({ studentId: archived.id, date: '2026-08-10', category: 'task', rating: 'positive', content: '归档学生历史记录', followUp: '', tags: [] });
+    await repositories.studentRecords.create({ studentId: active.id, date: '2026-08-10', category: 'task', rating: 'positive', content: '在读学生记录', followUp: '', tags: [] });
+    const user = userEvent.setup();
+    renderStudentPage(repositories);
+
+    await user.click(await screen.findByRole('button', { name: '学生记录汇总' }));
+    const studentFilter = screen.getByLabelText('学生筛选');
+    expect(within(studentFilter).getByRole('option', { name: '林同学（已归档）' })).toBeVisible();
+    await user.selectOptions(studentFilter, archived.id);
+
+    const summary = screen.getByRole('table', { name: '学生记录汇总' });
+    expect(within(summary).getByText('归档学生历史记录')).toBeVisible();
+    expect(within(summary).queryByText('在读学生记录')).not.toBeInTheDocument();
+  });
 });
