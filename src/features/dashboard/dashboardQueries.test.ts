@@ -11,7 +11,7 @@ function todoFixture(overrides: Partial<Todo>): Todo {
 }
 
 test('separates today, overdue, course, and role counts in the local day', () => {
-  const summary = buildDashboardSummary(new Date('2026-08-10T00:30:00+08:00'), [
+  const summary = buildDashboardSummary(new Date(2026, 7, 10, 0, 30), [
     todoFixture({ id: 'today', role: 'dean', startAt: '2026-08-10T09:00:00+08:00' }),
     todoFixture({ id: 'overdue', role: 'head', startAt: '2026-08-09T09:00:00+08:00' }),
     todoFixture({ id: 'done', role: 'personal', status: 'done', startAt: '2026-08-10T10:00:00+08:00' }),
@@ -24,7 +24,7 @@ test('sorts todays todo and course occurrences into one timeline', () => {
   const occurrences: CalendarOccurrence[] = [
     { id: 'course', sourceId: 'course', kind: 'course', title: '统计学', start: '2026-08-10T09:00:00+08:00', end: '2026-08-10T10:00:00+08:00' },
   ];
-  const timeline = buildTodayTimeline(new Date('2026-08-10T12:00:00+08:00'), [
+  const timeline = buildTodayTimeline(new Date(2026, 7, 10, 12), [
     todoFixture({ id: 'later', title: '写报告', startAt: '2026-08-10T14:00:00+08:00' }),
     todoFixture({ id: 'done', title: '已完成', status: 'done', startAt: '2026-08-10T08:00:00+08:00' }),
   ], occurrences);
