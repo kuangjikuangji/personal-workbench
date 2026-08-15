@@ -24,6 +24,12 @@ test('records and exports a student performance entry', async ({ page }, testInf
   await recordDialog.getByRole('button', { name: '保存' }).click();
   await expect(recordDialog).toBeHidden();
   await expect(detailDialog.getByText('完成数据分析初稿')).toBeVisible();
+  await detailDialog.getByRole('button', { name: '编辑完成数据分析初稿' }).click();
+  const editRecordDialog = page.getByRole('dialog', { name: '编辑日常记录' });
+  await editRecordDialog.getByLabel('内容').fill('完成数据分析定稿');
+  await editRecordDialog.getByRole('button', { name: '保存' }).click();
+  await expect(editRecordDialog).toBeHidden();
+  await expect(detailDialog.getByText('完成数据分析定稿')).toBeVisible();
 
   await detailDialog.getByRole('button', { name: '添加日常记录' }).click();
   const secondRecordDialog = page.getByRole('dialog', { name: '添加日常记录' });
@@ -33,6 +39,11 @@ test('records and exports a student performance entry', async ({ page }, testInf
   await secondRecordDialog.getByRole('button', { name: '保存' }).click();
   await expect(secondRecordDialog).toBeHidden();
   await expect(detailDialog.getByText('协作记录需改进')).toBeVisible();
+  await detailDialog.getByRole('button', { name: '删除协作记录需改进' }).click();
+  const deleteRecordDialog = page.getByRole('dialog', { name: '删除日常记录' });
+  await deleteRecordDialog.getByRole('button', { name: '删除' }).click();
+  await expect(deleteRecordDialog).toBeHidden();
+  await expect(detailDialog.getByText('协作记录需改进')).toBeHidden();
   await detailDialog.getByRole('button', { name: '关闭' }).first().click();
 
   await page.getByRole('button', { name: '学生记录汇总' }).click();
@@ -49,7 +60,7 @@ test('records and exports a student performance entry', async ({ page }, testInf
   const workbook = XLSX.read(await readFile(path));
   const rows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[workbook.SheetNames[0]]!);
   expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({ '学生姓名': '陈同学', '类别': '科研学习', '等级': '积极', '内容': '完成数据分析初稿' });
+  expect(rows[0]).toMatchObject({ '学生姓名': '陈同学', '类别': '科研学习', '等级': '积极', '内容': '完成数据分析定稿' });
   expect(JSON.stringify(rows)).not.toContain('协作记录需改进');
 });
 

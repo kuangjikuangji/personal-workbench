@@ -1,6 +1,7 @@
 import { type ChangeEvent, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRepositories } from '../../app/providers';
+import { clearBrowserReminderIdStore } from '../todos/ReminderCoordinator';
 import { backupTableNames, exportBackup, restoreBackup, validateBackup, type WorkbenchBackupV1 } from '../../db/backup';
 import { Button } from '../../shared/ui/Button';
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog';
@@ -53,6 +54,7 @@ export function BackupRestorePanel() {
       const current = await exportBackup(repositories);
       downloadBackup(current, `恢复前完整备份-${localDateStamp()}.json`);
       await restoreBackup(preview, repositories);
+      clearBrowserReminderIdStore();
       queryClient.clear();
       setPreview(null);
       setStatus('备份恢复成功。');

@@ -39,6 +39,23 @@ test('fills teachers, records attendance, and exports mentorship summary', async
   await page.getByRole('button', { name: '教师名册' }).click();
   await page.getByRole('button', { name: '查看张老师' }).click();
   const teacherDialog = page.getByRole('dialog', { name: '张老师详情' });
+  await teacherDialog.getByRole('button', { name: '新增年度记录' }).click();
+  const recordDialog = page.getByRole('dialog', { name: '新增年度记录' });
+  await recordDialog.getByLabel('标题').fill('年度专项');
+  await recordDialog.getByLabel('内容').fill('初稿');
+  await recordDialog.getByRole('button', { name: '保存' }).click();
+  await expect(recordDialog).toBeHidden();
+  await teacherDialog.getByRole('button', { name: '编辑年度专项' }).click();
+  const editRecordDialog = page.getByRole('dialog', { name: '编辑年度记录' });
+  await editRecordDialog.getByLabel('标题').fill('年度专项完成');
+  await editRecordDialog.getByRole('button', { name: '保存' }).click();
+  await expect(editRecordDialog).toBeHidden();
+  await expect(teacherDialog.getByText('年度专项完成', { exact: true })).toBeVisible();
+  await teacherDialog.getByRole('button', { name: '删除年度专项完成' }).click();
+  const deleteRecordDialog = page.getByRole('dialog', { name: '删除年度记录' });
+  await deleteRecordDialog.getByRole('button', { name: '删除' }).click();
+  await expect(deleteRecordDialog).toBeHidden();
+  await expect(teacherDialog.getByText('年度专项完成', { exact: true })).toBeHidden();
   await teacherDialog.getByRole('button', { name: '科研导师' }).click();
   await teacherDialog.getByRole('button', { name: '新增指导学生' }).click();
   const mentorshipDialog = page.getByRole('dialog', { name: '新增指导学生' });
@@ -49,6 +66,12 @@ test('fills teachers, records attendance, and exports mentorship summary', async
   await mentorshipDialog.getByRole('button', { name: '保存' }).click();
   await expect(mentorshipDialog).toBeHidden();
   await expect(teacherDialog.getByText('王同学', { exact: true })).toBeVisible();
+  await teacherDialog.getByRole('button', { name: '编辑王同学' }).click();
+  const editMentorshipDialog = page.getByRole('dialog', { name: '编辑指导学生' });
+  await editMentorshipDialog.getByLabel('指导主题').fill('数据治理实证');
+  await editMentorshipDialog.getByRole('button', { name: '保存' }).click();
+  await expect(editMentorshipDialog).toBeHidden();
+  await expect(teacherDialog.getByText(/数据治理实证/)).toBeVisible();
   await teacherDialog.getByRole('button', { name: '关闭' }).first().click();
 
   await page.getByRole('button', { name: '科研导师汇总' }).click();

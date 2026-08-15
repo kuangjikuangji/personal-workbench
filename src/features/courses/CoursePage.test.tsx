@@ -93,4 +93,19 @@ describe('CoursePage', () => {
     expect(await repositories.semesters.list()).toEqual([]);
     expect(await repositories.courses.list()).toEqual([]);
   });
+
+  test('rejects an invalid token in explicit teaching weeks without writing a course', async () => {
+    const repositories = createTestRepositories();
+    await repositories.semesters.create({ name: '2026 秋季', startDate: '2026-09-01', endDate: '2027-01-15', totalWeeks: 20, isActive: true });
+    renderCoursePage(repositories);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: '新建课程' }));
+    const dialog = screen.getByRole('dialog', { name: '新建课程' });
+    await user.type(within(dialog).getByLabelText('课程名称'), '统计学');
+    await user.selectOptions(within(dialog).getByLabelText('周次规则'), 'explicit');
+    await user.type(await within(dialog).findByRole('textbox', { name: /^指定周次/ }), '1, x, 3');
+    await user.click(within(dialog).getByRole('button', { name: '保存' }));
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('指定周次包含非法内容');
+    expect(await repositories.courses.list()).toEqual([]);
+  });
 });

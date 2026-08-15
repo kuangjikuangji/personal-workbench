@@ -2,11 +2,11 @@ import { type PropsWithChildren, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Dialog } from '../shared/ui/Dialog';
 import { Button } from '../shared/ui/Button';
-import { mobileNavigation, navigation, type NavigationItem } from './navigation';
+import { managementNavigation, mobileNavigation, navigation, personalNavigation } from './navigation';
 import { usePwaUpdate } from './usePwaUpdate';
 import './installPromptStore';
 
-function NavigationLink({ item, onNavigate }: { item: NavigationItem; onNavigate?: () => void }) {
+function NavigationLink({ item, onNavigate }: { item: { to: string; label: string }; onNavigate?: () => void }) {
   return (
     <NavLink
       className={({ isActive }) => `navigation-link${isActive ? ' is-active' : ''}`}
@@ -40,6 +40,7 @@ function DesktopNavigation({ hidden }: { hidden: boolean }) {
 
 export function AppShell({ children }: PropsWithChildren) {
   const [managementOpen, setManagementOpen] = useState(false);
+  const [personalOpen, setPersonalOpen] = useState(false);
   const pwaUpdate = usePwaUpdate();
 
   return (
@@ -50,11 +51,19 @@ export function AppShell({ children }: PropsWithChildren) {
       <nav className="mobile-nav" aria-label="底部导航">
         {mobileNavigation.map((item) => <NavigationLink item={item} key={item.to} />)}
         <button className="navigation-link" type="button" onClick={() => setManagementOpen(true)}>管理</button>
+        <button className="navigation-link" type="button" onClick={() => setPersonalOpen(true)}>我的</button>
       </nav>
       <Dialog className="management-drawer" open={managementOpen} onClose={() => setManagementOpen(false)} title="管理">
         <nav aria-label="管理导航">
-          {navigation.filter((item) => item.group === '组织管理').map((item) => (
+          {managementNavigation.map((item) => (
             <NavigationLink item={item} key={item.to} onNavigate={() => setManagementOpen(false)} />
+          ))}
+        </nav>
+      </Dialog>
+      <Dialog className="management-drawer" open={personalOpen} onClose={() => setPersonalOpen(false)} title="我的">
+        <nav aria-label="我的导航">
+          {personalNavigation.map((item) => (
+            <NavigationLink item={item} key={item.to} onNavigate={() => setPersonalOpen(false)} />
           ))}
         </nav>
       </Dialog>

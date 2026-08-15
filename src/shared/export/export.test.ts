@@ -23,6 +23,18 @@ describe('tabular exports', () => {
     expect(new TextDecoder().decode(bytes)).toContain('"\u4ed6\u8bf4""\u597d""\n\u4e0b\u6b21\u89c1",');
   });
 
+  test('neutralizes spreadsheet formulas after leading whitespace without changing ordinary text', () => {
+    const bytes = makeCsv(
+      [{ key: 'value', label: '值' }],
+      [
+        { value: '=SUM(A1:A2)' }, { value: '+cmd' }, { value: '-42' }, { value: '@mention' },
+        { value: '  =spaced' }, { value: '2026-08-10' }, { value: '普通文本' },
+      ],
+    );
+
+    expect(new TextDecoder().decode(bytes)).toBe("值\r\n'=SUM(A1:A2)\r\n'+cmd\r\n'-42\r\n'@mention\r\n  '=spaced\r\n2026-08-10\r\n普通文本");
+  });
+
   test('creates a readable xlsx workbook with stable Chinese headers', async () => {
     const buffer = await makeXlsx(
       '教师汇总',

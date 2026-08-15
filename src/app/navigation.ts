@@ -14,8 +14,10 @@ export const navigation = [
 export type NavigationItem = (typeof navigation)[number];
 
 export const mobileNavigation = [
-  navigation[0],
-  navigation[1],
-  navigation[2],
-  navigation[3],
+  { to: '/', label: '概览' },
+  { to: '/todos', label: '待办' },
+  { to: '/calendar', label: '日历' },
 ] as const;
+
+export const managementNavigation = navigation.filter((item) => item.to === '/courses' || item.group === '组织管理');
+export const personalNavigation = navigation.filter((item) => item.group === '学习' || item.to === '/settings');

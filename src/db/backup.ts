@@ -1,61 +1,75 @@
 import { z } from 'zod';
 import type { Repositories } from './repositories';
 
-const nullableString = z.string().nullable();
+const uuid = z.string().uuid('必须是有效 UUID');
+function isValidIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+const isoDate = z.string().refine(isValidIsoDate, '必须是有效日期（YYYY-MM-DD）');
+const isoDateTime = z.string().refine((value) => {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/);
+  return Boolean(match && isValidIsoDate(match[1]) && !Number.isNaN(Date.parse(value)));
+}, '必须是有效日期时间');
+const nullableUuid = uuid.nullable();
+const nullableDateTime = isoDateTime.nullable();
+const year = z.string().regex(/^\d{4}$/, '年份必须为四位整数');
+const time = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, '必须是有效时间（HH:mm）');
 const baseEntitySchema = z.object({
-  id: z.string(),
+  id: uuid,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
 
 const todoSchema = baseEntitySchema.extend({
   title: z.string(), description: z.string(), role: z.enum(['dean', 'head', 'personal']),
-  startAt: nullableString, endAt: nullableString, remindAt: nullableString,
+  startAt: nullableDateTime, endAt: nullableDateTime, remindAt: nullableDateTime,
   priority: z.enum(['low', 'normal', 'high']), status: z.enum(['open', 'done']),
-  sourceType: z.literal('idea').nullable(), sourceId: nullableString,
+  sourceType: z.literal('idea').nullable(), sourceId: nullableUuid,
 });
 const semesterSchema = baseEntitySchema.extend({
-  name: z.string(), startDate: z.string(), endDate: z.string(), totalWeeks: z.number(), isActive: z.boolean(),
+  name: z.string(), startDate: isoDate, endDate: isoDate, totalWeeks: z.number().int('教学周数必须为整数').min(1, '教学周数至少为 1').max(60, '教学周数不能超过 60'), isActive: z.boolean(),
 });
 const weekRuleSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('every') }), z.object({ kind: z.literal('odd') }),
-  z.object({ kind: z.literal('even') }), z.object({ kind: z.literal('explicit'), weeks: z.array(z.number()) }),
+  z.object({ kind: z.literal('even') }), z.object({ kind: z.literal('explicit'), weeks: z.array(z.number().int('周次必须为整数').min(1, '周次至少为 1')) }),
 ]);
 const courseSchema = baseEntitySchema.extend({
-  semesterId: z.string(), name: z.string(), location: z.string(), teacher: z.string(), weekday: z.number(),
-  startTime: z.string(), endTime: z.string(), startWeek: z.number(), endWeek: z.number(),
+  semesterId: uuid, name: z.string(), location: z.string(), teacher: z.string(), weekday: z.number().int().min(1, '星期必须在 1 到 7 之间').max(7, '星期必须在 1 到 7 之间'),
+  startTime: time, endTime: time, startWeek: z.number().int('起始周必须为整数').min(1, '起始周至少为 1'), endWeek: z.number().int('结束周必须为整数').min(1, '结束周至少为 1'),
   weekRule: weekRuleSchema, notes: z.string(),
 });
-const teacherSchema = baseEntitySchema.extend({ name: z.string(), department: z.string(), archivedAt: nullableString });
-const teacherYearSummarySchema = baseEntitySchema.extend({ teacherId: z.string(), year: z.string(), state: z.enum(['empty', 'reported']) });
+const teacherSchema = baseEntitySchema.extend({ name: z.string(), department: z.string(), archivedAt: z.string().datetime().nullable() });
+const teacherYearSummarySchema = baseEntitySchema.extend({ teacherId: uuid, year, state: z.enum(['empty', 'reported']) });
 const teacherRecordSchema = baseEntitySchema.extend({
-  teacherId: z.string(), year: z.string(), type: z.enum(['work', 'meeting', 'material', 'publicService']),
-  date: z.string(), title: z.string(), content: z.string(),
+  teacherId: uuid, year, type: z.enum(['work', 'meeting', 'material', 'publicService']),
+  date: isoDate, title: z.string(), content: z.string(),
   status: z.enum(['pending', 'attended', 'absent', 'leave', 'submitted', 'completed']), notes: z.string(),
 });
 const mentorshipSchema = baseEntitySchema.extend({
-  teacherId: z.string(), academicYear: z.string(), studentName: z.string(), grade: z.string(), major: z.string(),
+  teacherId: uuid, academicYear: z.string(), studentName: z.string(), grade: z.string(), major: z.string(),
   topic: z.string(), status: z.enum(['planned', 'active', 'completed', 'paused']), notes: z.string(),
 });
 const researchItemSchema = baseEntitySchema.extend({
-  title: z.string(), authors: z.string(), source: z.string(), year: z.number().nullable(), urlOrDoi: z.string(),
-  tags: z.array(z.string()), status: z.enum(['unread', 'reading', 'read']), rating: z.number().nullable(),
-  abstract: z.string(), notes: z.string(), sourceType: z.literal('idea').nullable(), sourceId: nullableString,
+  title: z.string(), authors: z.string(), source: z.string(), year: z.number().int('年份必须为整数').min(0).max(9999).nullable(), urlOrDoi: z.string(),
+  tags: z.array(z.string()), status: z.enum(['unread', 'reading', 'read']), rating: z.number().int('评分必须为整数').min(1).max(5).nullable(),
+  abstract: z.string(), notes: z.string(), sourceType: z.literal('idea').nullable(), sourceId: nullableUuid,
 });
 const learningMethodSchema = baseEntitySchema.extend({
   name: z.string(), scenario: z.string(), steps: z.string(), evaluation: z.string(), tags: z.array(z.string()),
 });
-const ideaSchema = baseEntitySchema.extend({ content: z.string(), tags: z.array(z.string()), pinned: z.boolean(), archivedAt: nullableString });
+const ideaSchema = baseEntitySchema.extend({ content: z.string(), tags: z.array(z.string()), pinned: z.boolean(), archivedAt: z.string().datetime().nullable() });
 const lessonPlanSchema = baseEntitySchema.extend({
-  courseId: nullableString, chapter: z.string(), objectives: z.string(), outline: z.string(), resources: z.string(),
-  activities: z.string(), plannedDate: nullableString, status: z.enum(['notStarted', 'inProgress', 'done']),
-  sourceType: z.literal('idea').nullable(), sourceId: nullableString,
+  courseId: nullableUuid, chapter: z.string(), objectives: z.string(), outline: z.string(), resources: z.string(),
+  activities: z.string(), plannedDate: isoDate.nullable(), status: z.enum(['notStarted', 'inProgress', 'done']),
+  sourceType: z.literal('idea').nullable(), sourceId: nullableUuid,
 });
 const studentSchema = baseEntitySchema.extend({
-  name: z.string(), program: z.string(), cohort: z.string(), contact: z.string(), notes: z.string(), archivedAt: nullableString,
+  name: z.string(), program: z.string(), cohort: z.string(), contact: z.string(), notes: z.string(), archivedAt: z.string().datetime().nullable(),
 });
 const studentRecordSchema = baseEntitySchema.extend({
-  studentId: z.string(), date: z.string(), category: z.enum(['task', 'attendance', 'research', 'service', 'other']),
+  studentId: uuid, date: isoDate, category: z.enum(['task', 'attendance', 'research', 'service', 'other']),
   rating: z.enum(['positive', 'normal', 'attention']), content: z.string(), followUp: z.string(), tags: z.array(z.string()),
 });
 const appSettingSchema = z.object({ key: z.string(), value: z.unknown(), updatedAt: z.string().datetime() });
@@ -71,6 +85,65 @@ export const backupSchema = z.object({
     ideas: z.array(ideaSchema), lessonPlans: z.array(lessonPlanSchema), students: z.array(studentSchema),
     studentRecords: z.array(studentRecordSchema), settings: z.array(appSettingSchema),
   }),
+}).superRefine((backup, context) => {
+  const { tables } = backup;
+  const issue = (message: string, path: (string | number)[]) => context.addIssue({ code: 'custom', message, path });
+  const idTables = [
+    ['todos', '待办'], ['semesters', '学期'], ['courses', '课程'], ['teachers', '教师'],
+    ['teacherYearSummaries', '教师年度汇总'], ['teacherRecords', '教师记录'], ['mentorships', '导师记录'],
+    ['researchItems', '科研记录'], ['learningMethods', '学习方法'], ['ideas', '灵感'], ['lessonPlans', '备课记录'],
+    ['students', '学生'], ['studentRecords', '学生记录'],
+  ] as const;
+  for (const [tableName, label] of idTables) {
+    const seen = new Set<string>();
+    tables[tableName].forEach((entity, index) => {
+      if (seen.has(entity.id)) issue(`${label}存在重复 ID`, ['tables', tableName, index, 'id']);
+      seen.add(entity.id);
+    });
+  }
+  const settingKeys = new Set<string>();
+  tables.settings.forEach((setting, index) => {
+    if (settingKeys.has(setting.key)) issue('设置存在重复键', ['tables', 'settings', index, 'key']);
+    settingKeys.add(setting.key);
+  });
+  if (tables.semesters.filter((semester) => semester.isActive).length > 1) issue('只能有一个当前学期', ['tables', 'semesters']);
+
+  const semesters = new Map(tables.semesters.map((semester) => [semester.id, semester]));
+  tables.semesters.forEach((semester, index) => {
+    if (semester.endDate < semester.startDate) issue('学期结束日期必须晚于或等于开始日期', ['tables', 'semesters', index]);
+  });
+  tables.courses.forEach((course, index) => {
+    const semester = semesters.get(course.semesterId);
+    if (!semester) issue('课程引用的学期不存在', ['tables', 'courses', index, 'semesterId']);
+    if (course.endTime <= course.startTime) issue('课程结束时间必须晚于开始时间', ['tables', 'courses', index]);
+    if (course.endWeek < course.startWeek) issue('课程结束周必须晚于或等于起始周', ['tables', 'courses', index]);
+    if (semester && course.endWeek > semester.totalWeeks) issue('课程周次不能超过学期教学周数', ['tables', 'courses', index]);
+    if (course.weekRule.kind === 'explicit' && course.weekRule.weeks.some((week) => week < course.startWeek || week > course.endWeek)) issue('指定周次必须位于课程起止周内', ['tables', 'courses', index, 'weekRule']);
+  });
+
+  tables.todos.forEach((todo, index) => {
+    if (todo.startAt && todo.endAt && new Date(todo.endAt).getTime() <= new Date(todo.startAt).getTime()) issue('待办结束时间必须晚于开始时间', ['tables', 'todos', index]);
+  });
+
+  const teachers = new Set(tables.teachers.map((teacher) => teacher.id));
+  const summaryKeys = new Set<string>();
+  tables.teacherYearSummaries.forEach((summary, index) => {
+    if (!teachers.has(summary.teacherId)) issue('教师年度汇总引用的教师不存在', ['tables', 'teacherYearSummaries', index, 'teacherId']);
+    const key = `${summary.teacherId}::${summary.year}`;
+    if (summaryKeys.has(key)) issue('教师年度汇总重复（同一教师与年份只能有一条）', ['tables', 'teacherYearSummaries', index]);
+    summaryKeys.add(key);
+  });
+  tables.teacherRecords.forEach((record, index) => {
+    if (!teachers.has(record.teacherId)) issue('教师记录引用的教师不存在', ['tables', 'teacherRecords', index, 'teacherId']);
+  });
+  tables.mentorships.forEach((record, index) => {
+    if (!teachers.has(record.teacherId)) issue('导师记录引用的教师不存在', ['tables', 'mentorships', index, 'teacherId']);
+  });
+
+  const students = new Set(tables.students.map((student) => student.id));
+  tables.studentRecords.forEach((record, index) => {
+    if (!students.has(record.studentId)) issue('学生记录引用的学生不存在', ['tables', 'studentRecords', index, 'studentId']);
+  });
 });
 
 export type WorkbenchBackupV1 = z.infer<typeof backupSchema>;

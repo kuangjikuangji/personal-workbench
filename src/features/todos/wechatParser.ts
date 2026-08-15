@@ -91,7 +91,7 @@ function parseTime(text: string): ParsedTime | null {
   const range = text.match(/((?:上午|下午|晚上)?\s*\d{1,2}(?::\d{2}|点半?|点\d{1,2}分?))\s*[-~至到—]\s*((?:上午|下午|晚上)?\s*\d{1,2}(?::\d{2}|点半?|点\d{1,2}分?))/);
   if (range) {
     const start = normalizeTime(range[1]);
-    const end = normalizeTime(range[2]);
+    const end = normalizeTime(inheritPeriod(range[1], range[2]));
     if (start && end) return { start, end, matchedText: range[0] };
   }
 
@@ -99,6 +99,12 @@ function parseTime(text: string): ParsedTime | null {
   if (!single) return null;
   const start = normalizeTime(single[0]);
   return start ? { start, end: null, matchedText: single[0] } : null;
+}
+
+function inheritPeriod(start: string, end: string): string {
+  if (/^(?:上午|下午|晚上)/.test(end.replace(/\s/g, ''))) return end;
+  const period = start.replace(/\s/g, '').match(/^(上午|下午|晚上)/)?.[1];
+  return period ? `${period}${end}` : end;
 }
 
 function normalizeTime(value: string): string | null {

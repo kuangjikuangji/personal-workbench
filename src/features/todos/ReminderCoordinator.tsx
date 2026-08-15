@@ -5,6 +5,7 @@ import { catchUpDueReminders, type ReminderNotifier } from './reminders';
 
 const DEFAULT_INTERVAL_MS = 60_000;
 const STORAGE_KEY = 'personal-workbench:notified-reminder-ids';
+const activeBrowserReminderSets = new Set<Set<string>>();
 
 export interface ReminderIdStore {
   load(): Set<string>;
@@ -138,15 +139,22 @@ export function createBrowserReminderIdStore(): ReminderIdStore {
   let memoryIds = new Set<string>();
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) memoryIds = new Set(JSON.parse(saved) as string[]);
+    if (saved) {
+      memoryIds = new Set((JSON.parse(saved) as string[]).filter((id) => id.includes('::')));
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...memoryIds]));
+    }
   } catch {
     memoryIds = new Set();
   }
+  activeBrowserReminderSets.add(memoryIds);
 
   return {
-    load: () => new Set(memoryIds),
+    // The coordinator intentionally holds this live Set so a successful
+    // full-database restore can clear dedupe state without remounting it.
+    load: () => memoryIds,
     save(ids) {
-      memoryIds = new Set(ids);
+      memoryIds.clear();
+      for (const id of ids) memoryIds.add(id);
       try {
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...ids]));
       } catch {
@@ -154,6 +162,15 @@ export function createBrowserReminderIdStore(): ReminderIdStore {
       }
     },
   };
+}
+
+export function clearBrowserReminderIdStore(): void {
+  for (const ids of activeBrowserReminderSets) ids.clear();
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // A subsequent coordinator starts with an empty in-memory store regardless.
+  }
 }
 
 export function createBrowserNotificationAdapter(): BrowserNotificationAdapter | null {
@@ -171,7 +188,7 @@ export async function deliverReminder(
 ): Promise<void> {
   if (notificationAdapter?.permission === 'granted') {
     try {
-      notificationAdapter.show('待办提醒', { body: todo.title, tag: `todo-${todo.id}` });
+      notificationAdapter.show('待办提醒', { body: todo.title, tag: `todo-${todo.id}-${todo.remindAt ?? ''}` });
       return;
     } catch {
       // Fall through to the in-application delivery interface.

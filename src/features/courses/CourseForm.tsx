@@ -21,6 +21,10 @@ function parseExplicitWeeks(value: string): number[] {
   return [...new Set(value.split(/[,，\s]+/).map(Number).filter((week) => Number.isInteger(week) && week > 0))].sort((a, b) => a - b);
 }
 
+function hasInvalidExplicitWeekToken(value: string): boolean {
+  return value.split(/[,，\s]+/).filter(Boolean).some((token) => !/^\d+$/.test(token) || Number(token) < 1);
+}
+
 export function CourseForm({ initial, semesters, onSaved }: CourseFormProps) {
   const defaultSemester = semesters.find((semester) => semester.isActive) ?? semesters[0];
   const [values, setValues] = useState<Omit<EntityInput<Course>, 'weekRule'>>({
@@ -56,6 +60,7 @@ export function CourseForm({ initial, semesters, onSaved }: CourseFormProps) {
       validationErrors.push('请填写有效的起止周');
     }
     if (selectedSemester && values.endWeek > selectedSemester.totalWeeks) validationErrors.push('结束周不能超过学期教学周数');
+    if (ruleKind === 'explicit' && hasInvalidExplicitWeekToken(weekText)) validationErrors.push('指定周次包含非法内容');
     if (ruleKind === 'explicit' && explicitWeeks.length === 0) validationErrors.push('请填写指定周次');
     if (ruleKind === 'explicit' && explicitWeeks.some((week) => week < values.startWeek || week > values.endWeek)) validationErrors.push('指定周次必须位于起止周内');
     setErrors(validationErrors);

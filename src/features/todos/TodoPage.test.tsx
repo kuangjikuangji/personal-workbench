@@ -166,6 +166,32 @@ describe('TodoPage', () => {
     expect(screen.getByText('下次开会提交预算表')).toBeVisible();
   });
 
+  test('rejects an edited WeChat preview whose end is not after its start without writing', async () => {
+    const repositories = createTestRepositories();
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <RepositoryProvider repositories={repositories}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter><TodoPage /></MemoryRouter>
+        </QueryClientProvider>
+      </RepositoryProvider>,
+    );
+
+    await screen.findByText('暂无待办');
+    await user.click(screen.getByRole('button', { name: '微信文本导入' }));
+    const dialog = screen.getByRole('dialog', { name: '微信文本导入' });
+    await user.type(within(dialog).getByLabelText('微信对话文本'), '2026-08-10 10:00-11:00 不应导入');
+    await user.click(within(dialog).getByRole('button', { name: '解析预览' }));
+    await user.clear(within(dialog).getByLabelText('第 1 行结束时间'));
+    await user.type(within(dialog).getByLabelText('第 1 行结束时间'), '2026-08-10T09:00');
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('结束时间必须晚于开始时间');
+    await user.click(within(dialog).getByRole('button', { name: '导入选中' }));
+    expect(await repositories.todos.list()).toEqual([]);
+  });
+
   test('cancels a conflicting WeChat batch without writing any selected row', async () => {
     const repositories = createTestRepositories();
     await repositories.todos.create(todoFixture());

@@ -3,17 +3,19 @@ import { useDirtyForm } from '../../app/usePwaUpdate';
 import type { TeacherRecord } from '../../domain/entities';
 import { Button } from '../../shared/ui/Button';
 import { Field } from '../../shared/ui/Field';
+import { localDateValue } from '../../shared/date';
 import { useAddMaterials, useApplyMeeting } from './teacherQueries';
 
 export function BulkTeacherAction({ ids, kind, onSaved }: { ids: string[]; kind: 'meeting' | 'material'; onSaved: () => void }) {
   const meeting = useApplyMeeting();
   const materials = useAddMaterials();
   const [title, setTitle] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const today = localDateValue();
+  const [date, setDate] = useState(today);
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<TeacherRecord['status']>(kind === 'meeting' ? 'attended' : 'submitted');
   const saving = meeting.isPending || materials.isPending;
-  useDirtyForm(Boolean(title || notes) || date !== new Date().toISOString().slice(0, 10) || status !== (kind === 'meeting' ? 'attended' : 'submitted'));
+  useDirtyForm(Boolean(title || notes) || date !== today || status !== (kind === 'meeting' ? 'attended' : 'submitted'));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!title.trim()) return;

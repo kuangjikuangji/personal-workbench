@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test } from 'vitest';
@@ -19,6 +19,26 @@ async function createStudent(repositories = createTestRepositories(), name = '�
 }
 
 describe('StudentPage', () => {
+  test('edits and deletes a student record from student detail', async () => {
+    const repositories = createTestRepositories();
+    const student = await repositories.students.create({ name: '陈同学', program: '', cohort: '', contact: '', notes: '', archivedAt: null });
+    const record = await repositories.studentRecords.create({ studentId: student.id, date: '2026-08-10', category: 'task', rating: 'positive', content: '旧记录', followUp: '', tags: [] });
+    const user = userEvent.setup();
+    renderStudentPage(repositories);
+    await user.click(await screen.findByRole('button', { name: '查看陈同学' }));
+    const detail = screen.getByRole('dialog', { name: '陈同学详情' });
+    await user.click(within(detail).getByRole('button', { name: '编辑旧记录' }));
+    const editDialog = screen.getByRole('dialog', { name: '编辑日常记录' });
+    await user.clear(within(editDialog).getByLabelText('内容'));
+    await user.type(within(editDialog).getByLabelText('内容'), '新记录');
+    await user.click(within(editDialog).getByRole('button', { name: '保存' }));
+    await waitFor(async () => expect((await repositories.studentRecords.get(record.id))?.content).toBe('新记录'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑日常记录' })).not.toBeInTheDocument());
+    expect(await within(detail).findByText('新记录', { selector: 'strong' })).toBeVisible();
+    await user.click(within(detail).getByRole('button', { name: '删除新记录' }));
+    await user.click(within(screen.getByRole('dialog', { name: '删除日常记录' })).getByRole('button', { name: '删除' }));
+    await waitFor(async () => expect(await repositories.studentRecords.get(record.id)).toBeUndefined());
+  });
   test('adds an individual performance record with all fields and filters the summary', async () => {
     const repositories = createTestRepositories();
     await createStudent(repositories);

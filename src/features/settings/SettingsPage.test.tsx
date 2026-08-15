@@ -8,6 +8,7 @@ import type { Repositories } from '../../db/repositories';
 import { exportBackup } from '../../db/backup';
 import { createTestRepositories } from '../../test/database';
 import { SettingsPage } from './SettingsPage';
+import * as reminderStore from '../todos/ReminderCoordinator';
 
 function renderSettings(repositories: Repositories) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -68,6 +69,24 @@ describe('SettingsPage', () => {
     expect(await target.todos.list()).toEqual([expect.objectContaining({ title: '恢复待办' })]);
   });
 
+  test('clears reminder dedupe state only after a successful restore', async () => {
+    const source = createTestRepositories();
+    const backup = await exportBackup(source);
+    const target = createTestRepositories();
+    const clear = vi.spyOn(reminderStore, 'clearBrowserReminderIdStore');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:test') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    renderSettings(target);
+    fireEvent.change(screen.getByLabelText('选择备份文件'), {
+      target: { files: [new File([JSON.stringify(backup)], 'backup.json', { type: 'application/json' })] },
+    });
+
+    await userEvent.setup().click(await screen.findByRole('button', { name: '确认覆盖当前数据' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('备份恢复成功'));
+    expect(clear).toHaveBeenCalledOnce();
+  });
+
   test('removes stale business snapshots after restore so returning pages read restored data', async () => {
     const source = createTestRepositories();
     const restoredTodo = await source.todos.create({ title: '恢复待办', description: '', role: 'personal', startAt: null, endAt: null, remindAt: null, priority: 'normal', status: 'open' });
@@ -101,6 +120,7 @@ describe('SettingsPage', () => {
     const target = createTestRepositories();
     const oldTodo = await target.todos.create({ title: '保留待办', description: '', role: 'personal', startAt: null, endAt: null, remindAt: null, priority: 'normal', status: 'open' });
     const repositories: Repositories = { ...target, transaction: async () => { throw new Error('注入失败'); } };
+    const clear = vi.spyOn(reminderStore, 'clearBrowserReminderIdStore');
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:test') });
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
@@ -114,6 +134,7 @@ describe('SettingsPage', () => {
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('恢复失败：注入失败'));
     expect(client.getQueryData(['todos'])).toEqual([oldTodo]);
+    expect(clear).not.toHaveBeenCalled();
   });
 
   test('reports an invalid backup without offering destructive confirmation', async () => {

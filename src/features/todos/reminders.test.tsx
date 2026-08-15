@@ -41,6 +41,21 @@ describe('todo reminders', () => {
     await catchUpDueReminders(todos, notified, new Date('2026-08-10T09:06:00+08:00'), notify);
 
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(notified).toEqual(new Set(['a']));
+    expect(notified).toEqual(new Set(['a::2026-08-10T09:00:00+08:00']));
+  });
+
+  test('notifies a rescheduled todo again because its reminder identity includes the scheduled time', async () => {
+    const notified = new Set<string>();
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const now = new Date('2026-08-10T10:00:00+08:00');
+
+    await catchUpDueReminders([todoFixture({ id: 'a', remindAt: '2026-08-10T09:00:00+08:00' })], notified, now, notify);
+    await catchUpDueReminders([todoFixture({ id: 'a', remindAt: '2026-08-10T09:30:00+08:00' })], notified, now, notify);
+
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(notified).toEqual(new Set([
+      'a::2026-08-10T09:00:00+08:00',
+      'a::2026-08-10T09:30:00+08:00',
+    ]));
   });
 });

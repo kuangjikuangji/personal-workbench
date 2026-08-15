@@ -2,7 +2,8 @@ export type ExportColumn = { key: string; label: string };
 export type ExportRow = Record<string, unknown>;
 
 function csvCell(value: unknown): string {
-  const text = value == null ? '' : String(value);
+  const raw = value == null ? '' : String(value);
+  const text = raw.replace(/^(\s*)([=+\-@])/, "$1'$2");
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 

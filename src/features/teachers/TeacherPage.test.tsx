@@ -123,6 +123,40 @@ describe('TeacherPage', () => {
     expect(within(detail).getByText('备注：每周五同步论文进展')).toBeVisible();
   });
 
+  test('edits and deletes teacher records and mentorships from teacher detail', async () => {
+    const repositories = createTestRepositories();
+    const teacher = await repositories.teachers.create({ name: '历史教师', department: '经济系', archivedAt: null });
+    const record = await repositories.teacherRecords.create({ teacherId: teacher.id, year: '2025', type: 'meeting', date: '2025-06-01', title: '旧例会', content: '', status: 'attended', notes: '' });
+    const mentorship = await repositories.mentorships.create({ teacherId: teacher.id, academicYear: '2025', studentName: '旧学生', grade: '大三', major: '经济学', topic: '旧主题', status: 'active', notes: '' });
+    const user = userEvent.setup();
+    renderTeacherPage(repositories);
+    await user.click(await screen.findByRole('button', { name: '查看历史教师' }));
+    const detail = screen.getByRole('dialog', { name: '历史教师详情' });
+    await user.click(within(detail).getByRole('button', { name: '编辑旧例会' }));
+    const recordDialog = screen.getByRole('dialog', { name: '编辑年度记录' });
+    await user.clear(within(recordDialog).getByLabelText('标题'));
+    await user.type(within(recordDialog).getByLabelText('标题'), '新例会');
+    await user.click(within(recordDialog).getByRole('button', { name: '保存' }));
+    await waitFor(async () => expect((await repositories.teacherRecords.get(record.id))?.title).toBe('新例会'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑年度记录' })).not.toBeInTheDocument());
+    expect(await within(detail).findByText('新例会', { selector: 'strong' })).toBeVisible();
+    await user.click(within(detail).getByRole('button', { name: '删除新例会' }));
+    await user.click(within(screen.getByRole('dialog', { name: '删除年度记录' })).getByRole('button', { name: '删除' }));
+    await waitFor(async () => expect(await repositories.teacherRecords.get(record.id)).toBeUndefined());
+    await user.click(within(detail).getByRole('button', { name: '科研导师' }));
+    await user.click(within(detail).getByRole('button', { name: '编辑旧学生' }));
+    const mentorshipDialog = screen.getByRole('dialog', { name: '编辑指导学生' });
+    await user.clear(within(mentorshipDialog).getByLabelText('学生姓名'));
+    await user.type(within(mentorshipDialog).getByLabelText('学生姓名'), '新学生');
+    await user.click(within(mentorshipDialog).getByRole('button', { name: '保存' }));
+    await waitFor(async () => expect((await repositories.mentorships.get(mentorship.id))?.studentName).toBe('新学生'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑指导学生' })).not.toBeInTheDocument());
+    expect(await within(detail).findByText('新学生', { selector: 'strong' })).toBeVisible();
+    await user.click(within(detail).getByRole('button', { name: '删除新学生' }));
+    await user.click(within(screen.getByRole('dialog', { name: '删除指导学生' })).getByRole('button', { name: '删除' }));
+    await waitFor(async () => expect(await repositories.mentorships.get(mentorship.id)).toBeUndefined());
+  });
+
   test('filters the mentorship summary by academic year, teacher, grade, and status', async () => {
     const repositories = createTestRepositories();
     const [first, second] = await seedTeachers(repositories, ['张老师', '李老师']);
@@ -167,6 +201,21 @@ describe('TeacherPage', () => {
       { 学生姓名: '王同学', 导师姓名: '张老师', 学年: '2026', 年级: '大三', 专业: '经济学', 指导主题: '数字经济', 进展: '进行中' },
     ]);
     download.restore();
+  });
+
+  test('shows archived teachers in historical year records and mentorship name filters', async () => {
+    const repositories = createTestRepositories();
+    const archived = await repositories.teachers.create({ name: '归档教师', department: '经济系', archivedAt: '2026-01-01T00:00:00.000Z' });
+    await repositories.teacherRecords.create({ teacherId: archived.id, year: '2025', type: 'work', date: '2025-06-01', title: '历史工作', content: '', status: 'completed', notes: '' });
+    await repositories.mentorships.create({ teacherId: archived.id, academicYear: '2025', studentName: '历史学生', grade: '大三', major: '经济学', topic: '历史主题', status: 'completed', notes: '' });
+    const user = userEvent.setup();
+    renderTeacherPage(repositories);
+    await user.click(await screen.findByRole('button', { name: '年度记录' }));
+    await user.selectOptions(screen.getByLabelText('年份'), '2025');
+    expect(screen.getByRole('row', { name: /归档教师.*已完成/ })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '科研导师汇总' }));
+    await user.selectOptions(screen.getByLabelText('教师筛选'), archived.id);
+    expect(screen.getByRole('row', { name: /历史学生.*归档教师/ })).toBeVisible();
   });
 
   test('exports the current teacher annual summary with stable Chinese columns', async () => {

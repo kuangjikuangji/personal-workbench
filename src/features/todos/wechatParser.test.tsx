@@ -37,4 +37,17 @@ describe('parseWeChatText', () => {
       needsDateConfirmation: false,
     });
   });
+
+  test('inherits an afternoon marker across the end of a time range', () => {
+    const [item] = parseWeChatText(
+      '明天下午2点-3点 项目沟通',
+      new Date('2026-08-10T08:00:00+08:00'),
+    );
+
+    expect(item).toMatchObject({
+      title: '项目沟通',
+      startAt: '2026-08-11T14:00',
+      endAt: '2026-08-11T15:00',
+    });
+  });
 });

@@ -5,6 +5,9 @@ import { createTestRepositories } from '../../test/database';
 import {
   createReminderCoordinator,
   ReminderCoordinator,
+  clearBrowserReminderIdStore,
+  createBrowserReminderIdStore,
+  deliverReminder,
   type ReminderIdStore,
 } from './ReminderCoordinator';
 
@@ -50,7 +53,7 @@ describe('reminder coordinator', () => {
 
     const reminders = await screen.findByRole('region', { name: '待办提醒' });
     expect(reminders).toHaveTextContent('提交院务会材料');
-    await waitFor(() => expect(store.ids.has(due.id)).toBe(true));
+    await waitFor(() => expect(store.ids.has(`${due.id}::${due.remindAt}`)).toBe(true));
   });
 
   test('does not record an id when the in-app reminder UI rejects delivery', async () => {
@@ -88,7 +91,7 @@ describe('reminder coordinator', () => {
     await coordinator.start();
 
     expect(notify).toHaveBeenCalledWith(due);
-    expect(store.ids).toEqual(new Set([due.id]));
+    expect(store.ids).toEqual(new Set([`${due.id}::${due.remindAt}`]));
     coordinator.stop();
   });
 
@@ -141,5 +144,53 @@ describe('reminder coordinator', () => {
 
     expect(store.ids.has(due.id)).toBe(false);
     coordinator.stop();
+  });
+
+  test('loads current reminder identities and removes legacy todo-only ids', () => {
+    window.localStorage.setItem('personal-workbench:notified-reminder-ids', JSON.stringify([
+      'legacy-todo',
+      'todo::2026-08-10T09:00:00+08:00',
+    ]));
+
+    expect(createBrowserReminderIdStore().load()).toEqual(new Set(['todo::2026-08-10T09:00:00+08:00']));
+    expect(window.localStorage.getItem('personal-workbench:notified-reminder-ids')).toBe(JSON.stringify(['todo::2026-08-10T09:00:00+08:00']));
+  });
+
+  test('clears persisted reminder identities through the shared store boundary', () => {
+    window.localStorage.setItem('personal-workbench:notified-reminder-ids', JSON.stringify(['todo::2026-08-10T09:00:00+08:00']));
+    const activeStore = createBrowserReminderIdStore();
+
+    clearBrowserReminderIdStore();
+
+    expect(window.localStorage.getItem('personal-workbench:notified-reminder-ids')).toBeNull();
+    expect(activeStore.load()).toEqual(new Set());
+  });
+
+  test('clears the identities held by an already-running browser coordinator', async () => {
+    const repositories = createTestRepositories();
+    await repositories.todos.create(todoInput());
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const coordinator = createReminderCoordinator({
+      repositories,
+      notify,
+      store: createBrowserReminderIdStore(),
+      now: () => new Date('2026-08-10T09:05:00+08:00'),
+    });
+
+    await coordinator.start();
+    clearBrowserReminderIdStore();
+    await coordinator.checkNow();
+
+    expect(notify).toHaveBeenCalledTimes(2);
+    coordinator.stop();
+  });
+
+  test('uses the reminder time in the system notification tag', async () => {
+    const todo = { id: 'todo', title: '改期提醒', remindAt: '2026-08-10T09:00:00+08:00' } as Todo;
+    const adapter = { permission: 'granted' as NotificationPermission, show: vi.fn() };
+
+    await deliverReminder(todo, vi.fn(), adapter);
+
+    expect(adapter.show).toHaveBeenCalledWith('待办提醒', expect.objectContaining({ tag: 'todo-todo-2026-08-10T09:00:00+08:00' }));
   });
 });

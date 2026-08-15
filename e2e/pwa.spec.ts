@@ -18,9 +18,26 @@ test('keeps local data through an offline reload and exposes responsive navigati
 
   if (testInfo.project.name === 'chromium-mobile') {
     await expect(page.getByRole('navigation', { name: '底部导航' })).toBeVisible();
+    for (const [label, heading] of [['概览', '工作概览'], ['待办', '待办管理'], ['日历', '日历']]) {
+      await page.getByRole('link', { name: label, exact: true }).click();
+      await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+    }
     await page.getByRole('button', { name: '管理', exact: true }).click();
-    await expect(page.getByRole('navigation', { name: '管理导航' })).toBeVisible();
-    await page.getByRole('button', { name: '关闭' }).click();
+    const management = page.getByRole('navigation', { name: '管理导航' });
+    await expect(management).toBeVisible();
+    for (const [label, heading] of [['课表', '学期与课表'], ['系室管理', '系室管理'], ['学生管理', '学生管理']]) {
+      await management.getByRole('link', { name: label, exact: true }).click();
+      await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+      if (label !== '学生管理') await page.getByRole('button', { name: '管理', exact: true }).click();
+    }
+    await page.getByRole('button', { name: '我的', exact: true }).click();
+    const personal = page.getByRole('navigation', { name: '我的导航' });
+    for (const [label, heading] of [['个人科研', '个人科研'], ['灵感记录', '灵感记录'], ['教学备课', '教学备课'], ['设置', '设置']]) {
+      await personal.getByRole('link', { name: label, exact: true }).click();
+      await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+      if (label !== '设置') await page.getByRole('button', { name: '我的', exact: true }).click();
+    }
+    await page.goto('/ideas');
   } else {
     await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
   }

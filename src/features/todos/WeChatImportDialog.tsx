@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useRepositories } from '../../app/providers';
+import { useDirtyForm } from '../../app/usePwaUpdate';
 import type { Role } from '../../domain/entities';
 import type { Todo } from '../../domain/entities';
 import { findScheduleConflicts, type ScheduleConflict } from '../../domain/scheduling';
@@ -25,6 +26,17 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
   const commitInFlight = useRef(false);
   const checkedRows = rows.filter((row) => row.checked);
   const hasUnconfirmed = checkedRows.some((row) => row.item.needsDateConfirmation);
+  const hasInvalidTimeRange = checkedRows.some((row) => hasInvalidRange(row.item));
+  useDirtyForm(Boolean(text.trim()) || rows.length > 0);
+
+  const closeDialog = () => {
+    setText('');
+    setRows([]);
+    setError('');
+    setConflicts([]);
+    setPendingItems([]);
+    onClose();
+  };
 
   const parse = () => {
     setRows(parseWeChatText(text, new Date()).map((item) => ({ checked: true, item })));
@@ -39,6 +51,10 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
 
   const importSelected = async () => {
     if (checkedRows.length === 0 || hasUnconfirmed) return;
+    if (hasInvalidTimeRange) {
+      setError('结束时间必须晚于开始时间');
+      return;
+    }
     setImporting(true);
     setError('');
     try {
@@ -60,6 +76,10 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
 
   const commitSelected = async (items: ParsedTodo[]) => {
     if (commitInFlight.current) return;
+    if (items.some(hasInvalidRange)) {
+      setError('结束时间必须晚于开始时间');
+      return;
+    }
     commitInFlight.current = true;
     setImporting(true);
     setError('');
@@ -83,7 +103,7 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
 
   return (
     <>
-    <Dialog open={open} onClose={onClose} title="微信文本导入">
+    <Dialog open={open} onClose={closeDialog} title="微信文本导入">
       <label className="field" htmlFor="wechat-import-text">
         <span className="field-label">微信对话文本</span>
         <textarea aria-label="微信对话文本" id="wechat-import-text" rows={5} value={text} onChange={(event) => setText(event.target.value)} />
@@ -129,9 +149,9 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
           ))}
         </div>
       )}
-      {error && <p role="alert">{error}</p>}
+      {(error || hasInvalidTimeRange) && <p role="alert">{error || '结束时间必须晚于开始时间'}</p>}
       <div className="dialog-actions">
-        <Button variant="secondary" onClick={onClose}>取消</Button>
+        <Button variant="secondary" onClick={closeDialog}>取消</Button>
         <Button disabled={checkedRows.length === 0 || hasUnconfirmed || importing} onClick={() => void importSelected()}>导入选中</Button>
       </div>
     </Dialog>
@@ -156,6 +176,10 @@ export function WeChatImportDialog({ open, onClose }: { open: boolean; onClose: 
     </ConfirmDialog>
     </>
   );
+}
+
+function hasInvalidRange(item: Pick<ParsedTodo, 'startAt' | 'endAt'>): boolean {
+  return Boolean(item.startAt && item.endAt && new Date(item.endAt) <= new Date(item.startAt));
 }
 
 function findImportConflicts(

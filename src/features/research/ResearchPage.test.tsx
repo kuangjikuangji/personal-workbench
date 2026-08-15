@@ -31,6 +31,16 @@ describe('ResearchPage', () => {
     expect(screen.queryByText('教学设计导论')).not.toBeInTheDocument();
   });
 
+  test('finds literature by URL or DOI', async () => {
+    const repositories = createTestRepositories();
+    await repositories.researchItems.create({ title: '不可见关键词标题', authors: '', source: '', year: 2026, urlOrDoi: 'https://doi.org/10.1234/unique-doi', tags: [], status: 'unread', rating: null, abstract: '', notes: '' });
+    renderResearchPage(repositories);
+    const user = userEvent.setup();
+    await screen.findByText('不可见关键词标题');
+    await user.type(screen.getByLabelText('搜索文献'), 'unique-doi');
+    expect(screen.getByText('不可见关键词标题')).toBeVisible();
+  });
+
   test('creates and deletes a learning method independently', async () => {
     renderResearchPage();
     const user = userEvent.setup();
