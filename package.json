@@ -19,6 +19,7 @@
     "@fullcalendar/react": "6.1.21",
     "@fullcalendar/timegrid": "6.1.21",
     "@hookform/resolvers": "latest",
+    "@supabase/supabase-js": "^2.112.3",
     "@tanstack/react-query": "latest",
     "dexie": "latest",
     "lucide-react": "latest",
