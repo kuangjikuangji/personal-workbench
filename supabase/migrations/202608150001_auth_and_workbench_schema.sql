@@ -58,7 +58,7 @@ declare
   week_value jsonb;
   week_number numeric;
 begin
-  if jsonb_typeof(rule) <> 'object' then
+  if jsonb_typeof(rule) is distinct from 'object' then
     return false;
   end if;
 
@@ -66,7 +66,8 @@ begin
   if kind in ('every', 'odd', 'even') then
     return true;
   end if;
-  if kind <> 'explicit' or jsonb_typeof(rule -> 'weeks') <> 'array' then
+  if kind is distinct from 'explicit'
+    or jsonb_typeof(rule -> 'weeks') is distinct from 'array' then
     return false;
   end if;
 
@@ -89,6 +90,10 @@ exception
     return false;
 end;
 $$;
+
+revoke all on function private.valid_week_rule(jsonb, int, int) from public;
+grant execute on function private.valid_week_rule(jsonb, int, int)
+  to authenticated, service_role;
 
 create table public.courses (
   id uuid primary key default extensions.gen_random_uuid(),
@@ -299,7 +304,8 @@ begin
   select s.total_weeks
   into semester_weeks
   from public.semesters s
-  where s.user_id = new.user_id and s.id = new.semester_id;
+  where s.user_id = new.user_id and s.id = new.semester_id
+  for update;
 
   if found and new.end_week > semester_weeks then
     raise exception 'course weeks exceed semester total weeks' using errcode = '23514';
@@ -307,6 +313,8 @@ begin
   return new;
 end;
 $$;
+
+revoke all on function private.enforce_course_semester_weeks() from public;
 
 create trigger courses_semester_weeks_check
 before insert or update of user_id, semester_id, end_week on public.courses
@@ -331,6 +339,8 @@ begin
 end;
 $$;
 
+revoke all on function private.prevent_semester_week_truncation() from public;
+
 create trigger semesters_total_weeks_check
 before update of total_weeks on public.semesters
 for each row execute function private.prevent_semester_week_truncation();
@@ -345,6 +355,8 @@ begin
   return new;
 end;
 $$;
+
+revoke all on function private.set_updated_at() from public;
 
 do $$
 declare
@@ -381,25 +393,8 @@ as $$
   );
 $$;
 
-create function public.complete_password_change()
-returns public.profiles
-language sql
-volatile
-security definer
-set search_path = ''
-as $$
-  update public.profiles p
-  set must_change_password = false,
-      updated_at = now()
-  where p.id = (select auth.uid())
-    and p.is_active
-  returning p.*;
-$$;
-
 revoke all on function public.current_user_can_access() from public;
-revoke all on function public.complete_password_change() from public;
 grant execute on function public.current_user_can_access() to authenticated;
-grant execute on function public.complete_password_change() to authenticated;
 
 alter table public.profiles enable row level security;
 create policy profiles_select_own

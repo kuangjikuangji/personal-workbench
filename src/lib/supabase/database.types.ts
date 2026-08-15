@@ -710,24 +710,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      complete_password_change: {
-        Args: never
-        Returns: {
-          created_at: string
-          id: string
-          is_active: boolean
-          must_change_password: boolean
-          role: string
-          updated_at: string
-          username: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "profiles"
-          isOneToOne: true
-          isSetofReturn: false
-        }
-      }
       current_user_can_access: { Args: never; Returns: boolean }
     }
     Enums: {
