@@ -711,6 +711,56 @@ export type Database = {
     }
     Functions: {
       current_user_can_access: { Args: never; Returns: boolean }
+      delete_semester: { Args: { p_semester_id: string }; Returns: undefined }
+      import_wechat_todos: {
+        Args: { p_todos: Json }
+        Returns: {
+          created_at: string
+          description: string
+          end_at: string | null
+          id: string
+          priority: string
+          remind_at: string | null
+          role: string
+          source_id: string | null
+          source_type: string | null
+          start_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "todos"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      save_todo_with_conflict_check: {
+        Args: { p_allow_conflicts: boolean; p_todo: Json }
+        Returns: Json
+      }
+      set_active_semester: {
+        Args: { p_semester_id: string }
+        Returns: {
+          created_at: string
+          end_date: string
+          id: string
+          is_active: boolean
+          name: string
+          start_date: string
+          total_weeks: number
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "semesters"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       [_ in never]: never
