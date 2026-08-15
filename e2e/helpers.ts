@@ -23,6 +23,11 @@ export type ScheduleFixture = {
   todoStart: string;
 };
 
+export function appPath(route = '/'): string {
+  const normalized = route === '/' ? '/' : `/${route.replace(/^\/+/, '')}`;
+  return `/personal-workbench/#${normalized}`;
+}
+
 function localDateParts(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -57,7 +62,7 @@ export async function openManagementRoute(page: Page, name: '系室管理' | '�
 }
 
 export async function createSemesterAndOddWeekCourse(page: Page, schedule = futureOddWeekSchedule()): Promise<void> {
-  await page.goto('/courses');
+  await page.goto(appPath('/courses'));
   await page.getByRole('button', { name: '新建学期' }).click();
   const semesterDialog = page.getByRole('dialog', { name: '新建学期' });
   await semesterDialog.getByLabel('学期名称').fill('E2E 动态学期');
@@ -87,7 +92,7 @@ export async function createTodo(
   page: Page,
   input: { end?: string; role: '院长助理' | '系主任' | '个人'; start: string; title: string },
 ): Promise<Locator> {
-  await page.goto('/todos');
+  await page.goto(appPath('/todos'));
   await page.getByRole('button', { name: '新建待办' }).click();
   const dialog = page.getByRole('dialog', { name: '新建待办' });
   await dialog.getByLabel('标题').fill(input.title);
@@ -114,7 +119,7 @@ export async function saveDownload(download: Download, testInfoOutputPath: strin
 }
 
 export async function createIdea(page: Page, content: string): Promise<void> {
-  await page.goto('/ideas');
+  await page.goto(appPath('/ideas'));
   await page.getByLabel('灵感内容').fill(content);
   await page.getByRole('button', { name: '记录灵感' }).click();
   await expect(page.getByRole('heading', { name: content })).toBeVisible();

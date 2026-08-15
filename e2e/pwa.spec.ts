@@ -1,8 +1,8 @@
-import { createIdea, expect, test } from './helpers';
+import { appPath, createIdea, expect, test } from './helpers';
 
 test('keeps local data through an offline reload and exposes responsive navigation', async ({ context, page }, testInfo) => {
   await createIdea(page, '离线持久化灵感');
-  const manifest = await (await page.request.get('/manifest.webmanifest')).json() as Record<string, unknown>;
+  const manifest = await (await page.request.get('/personal-workbench/manifest.webmanifest')).json() as Record<string, unknown>;
   expect(manifest).toMatchObject({ name: '个人工作学习工作台', display: 'standalone', start_url: './' });
   expect(manifest.icons).toEqual(expect.arrayContaining([expect.objectContaining({ sizes: '192x192' }), expect.objectContaining({ sizes: '512x512' })]));
 
@@ -37,7 +37,7 @@ test('keeps local data through an offline reload and exposes responsive navigati
       await expect(page.getByRole('heading', { name: heading })).toBeVisible();
       if (label !== '设置') await page.getByRole('button', { name: '我的', exact: true }).click();
     }
-    await page.goto('/ideas');
+    await page.goto(appPath('/ideas'));
   } else {
     await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
   }

@@ -1,7 +1,7 @@
-import { addTeacher, expect, openManagementRoute, saveDownload, test } from './helpers';
+import { addTeacher, appPath, expect, openManagementRoute, saveDownload, test } from './helpers';
 
 test('fills teachers, records attendance, and exports mentorship summary', async ({ page }, testInfo) => {
-  await page.goto('/');
+  await page.goto(appPath());
   await openManagementRoute(page, '系室管理');
   await addTeacher(page, '张老师');
   await addTeacher(page, '李老师');

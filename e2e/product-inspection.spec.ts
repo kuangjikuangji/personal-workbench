@@ -1,4 +1,4 @@
-import { expect, test } from './helpers';
+import { appPath, expect, test } from './helpers';
 
 const routes = [
   ['概览', '工作概览'],
@@ -15,7 +15,7 @@ const routes = [
 
 test('desktop navigation reaches every product module and exposes install guidance', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-desktop', 'desktop navigation inspection');
-  await page.goto('/');
+  await page.goto(appPath());
   for (const [link, heading] of routes) {
     await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: link, exact: true }).click();
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
@@ -26,7 +26,7 @@ test('desktop navigation reaches every product module and exposes install guidan
 
 test('mobile responsive tables render as cards and management navigation remains usable', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-mobile', 'mobile responsive inspection');
-  await page.goto('/teachers');
+  await page.goto(appPath('/teachers'));
   await page.getByRole('button', { name: '新增教师' }).click();
   const dialog = page.getByRole('dialog', { name: '新增教师' });
   await dialog.getByLabel('教师姓名').fill('响应式教师');
@@ -45,7 +45,7 @@ test('denied notifications fall back to an in-app reminder', async ({ context, p
   await page.addInitScript(() => {
     Object.defineProperty(window, 'Notification', { configurable: true, value: { permission: 'denied' } });
   });
-  await page.goto('/todos');
+  await page.goto(appPath('/todos'));
   await page.getByRole('button', { name: '新建待办' }).click();
   const dialog = page.getByRole('dialog', { name: '新建待办' });
   await dialog.getByLabel('标题').fill('通知降级待办');
