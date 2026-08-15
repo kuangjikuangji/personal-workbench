@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import * as XLSX from 'xlsx';
-import { expect, openManagementRoute, saveDownload, test } from './helpers';
+import { appPath, expect, openManagementRoute, saveDownload, test } from './helpers';
 
 test('records and exports a student performance entry', async ({ page }, testInfo) => {
-  await page.goto('/');
+  await page.goto(appPath());
   await openManagementRoute(page, '学生管理');
   await page.getByRole('button', { name: '新增学生' }).click();
   const studentDialog = page.getByRole('dialog', { name: '新增学生' });
@@ -65,7 +65,7 @@ test('records and exports a student performance entry', async ({ page }, testInf
 });
 
 test('keeps research, learning method, idea, and lesson data after reload', async ({ page }) => {
-  await page.goto('/research');
+  await page.goto(appPath('/research'));
   await page.getByRole('button', { name: '新建文献' }).click();
   const researchDialog = page.getByRole('dialog', { name: '新建文献' });
   await researchDialog.getByLabel('题目').fill('数字化教学评价');
@@ -82,12 +82,12 @@ test('keeps research, learning method, idea, and lesson data after reload', asyn
   await expect(methodDialog).toBeHidden();
   await expect(page.getByRole('heading', { name: '三轮文献阅读法' })).toBeVisible();
 
-  await page.goto('/ideas');
+  await page.goto(appPath('/ideas'));
   await page.getByLabel('灵感内容').fill('课程思政案例');
   await page.getByRole('button', { name: '记录灵感' }).click();
   await expect(page.getByRole('heading', { name: '课程思政案例' })).toBeVisible();
 
-  await page.goto('/lessons');
+  await page.goto(appPath('/lessons'));
   await page.getByRole('button', { name: '新建备课' }).click();
   const lessonDialog = page.getByRole('dialog', { name: '新建备课' });
   await lessonDialog.getByLabel('章节').fill('回归分析导入');
@@ -98,9 +98,9 @@ test('keeps research, learning method, idea, and lesson data after reload', asyn
 
   await page.reload();
   await expect(page.getByRole('heading', { name: '回归分析导入' })).toBeVisible();
-  await page.goto('/research');
+  await page.goto(appPath('/research'));
   await expect(page.getByRole('heading', { name: '数字化教学评价' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '三轮文献阅读法' })).toBeVisible();
-  await page.goto('/ideas');
+  await page.goto(appPath('/ideas'));
   await expect(page.getByRole('heading', { name: '课程思政案例' })).toBeVisible();
 });

@@ -2,6 +2,11 @@
 
 面向高校行政、教学与科研场景的本地优先 React PWA。
 
+## 在线访问
+
+- GitHub Pages：<https://kuangjikuangji.github.io/personal-workbench/>
+- 支持从 Chrome/Edge 安装为 PWA；数据当前保存在本机浏览器 IndexedDB 中。
+
 ## 本地运行
 
 ```bash

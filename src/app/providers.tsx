@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createContext, type PropsWithChildren, useContext, useState } from 'react';
-import { BrowserRouter } from 'react-router-dom';
+import { HashRouter } from 'react-router-dom';
 import { WorkbenchDatabase } from '../db/database';
 import { createLocalRepositories } from '../db/localRepositories';
 import type { Repositories } from '../db/repositories';
@@ -31,7 +31,7 @@ export function AppProviders({
   return (
     <RepositoryProvider repositories={repositories}>
       <ReminderCoordinator repositories={repositories} />
-      <QueryClientProvider client={client}><BrowserRouter>{children}</BrowserRouter></QueryClientProvider>
+      <QueryClientProvider client={client}><HashRouter>{children}</HashRouter></QueryClientProvider>
     </RepositoryProvider>
   );
 }
