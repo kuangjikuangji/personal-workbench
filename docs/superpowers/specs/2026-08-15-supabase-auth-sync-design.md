@@ -59,7 +59,7 @@ Supabase Edge Function 和本地管理员初始化环境中。Supabase 官方明
 用户在登录页输入短账号，前端将小写并去除首尾空格后映射为内部 Auth 邮箱：
 
 ```text
-admin -> admin@users.workbench.invalid
+zhoujingjing -> zhoujingjing@users.workbench.invalid
 ```
 
 这个内部邮箱不用于发送邮件，应用界面始终只显示 `profiles.username`。
@@ -69,16 +69,17 @@ admin -> admin@users.workbench.invalid
 通过仅管理员可运行的 Node.js 脚本创建初始账号：
 
 ```text
-账号：admin
-密码：admin123
+账号：zhoujingjing
+密码：由站点所有者在初始化时通过环境变量提供
 角色：admin
 状态：active
 必须改密：true
 ```
 
-脚本要求 `SUPABASE_URL` 与 `SUPABASE_SERVICE_ROLE_KEY`，且不得将后者写入
-Git、GitHub Pages 构建变量或浏览器产物。脚本必须幂等：已存在 `admin`
-时只校验账号资料，不再次重置密码。
+脚本要求 `SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY` 与
+`INITIAL_ADMIN_PASSWORD`，且不得将密码或 `service_role` 写入 Git、
+GitHub Pages 构建变量或浏览器产物。脚本必须幂等：已存在
+`zhoujingjing` 时只校验账号资料，不再次重置密码。
 
 ## 4. 登录、改密与会话流程
 
@@ -97,6 +98,13 @@ Git、GitHub Pages 构建变量或浏览器产物。脚本必须幂等：已存�
 9. 顶部显示当前账号、管理员标识和退出按钮。
 
 登录失败统一显示“账号或密码不正确”，不泄露账号是否存在。
+
+### 4.1 登录页视觉
+
+登录页使用站点所有者提供的校园建筑照片作为全屏背景。图片转换为适合
+Web 的本地静态资源，不依赖外部图床。页面在背景上覆盖渐变遮罩，
+登录表单放在高对比度卡片中，确保桌面和手机端的文字、输入框和错误提示
+都清晰可读。登录页不显示工作台导航或业务数据。
 
 ## 5. 管理员账号管理
 
@@ -317,7 +325,8 @@ Supabase 项目需要：
 
 ### 14.3 生产预览与 E2E
 
-- 首次 `admin / admin123` 登录后必须改密。
+- 首次使用初始管理员 `zhoujingjing` 登录后必须改密。
+- 登录页使用指定校园照片，在桌面和移动端均保持表单可读。
 - 修改 URL 无法绕过登录或强制改密。
 - 管理员新增、停用、启用和重置账号。
 - 同一账号的两个浏览器会话实时同步待办。
@@ -332,7 +341,7 @@ Supabase 项目需要：
 1. 创建或关联 Supabase 项目。
 2. 应用 SQL migrations，启用 RLS、RPC 和 Realtime publication。
 3. 部署 `admin-users` Edge Function 并配置服务端秘密。
-4. 运行幂等初始化脚本，创建 `admin / admin123`。
+4. 通过安全环境变量运行幂等初始化脚本，创建管理员 `zhoujingjing`。
 5. 在 GitHub Actions Variables 配置前端 URL 和 anon key。
 6. 通过 PR 合并前端与部署工作流变更。
 7. 等待 GitHub Pages 构建和部署成功。
