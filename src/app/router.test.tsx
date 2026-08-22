@@ -6,10 +6,12 @@ import { createTestRepositories } from '../test/database';
 import { RepositoryProvider } from './providers';
 import { AppRouter } from './router';
 
+const profile = { id: 'user-1', username: 'zhoujingjing', role: 'admin' as const, isActive: true, mustChangePassword: false };
+
 function renderRoute(route: string) {
   const repositories = createTestRepositories();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<RepositoryProvider repositories={repositories}><QueryClientProvider client={client}><MemoryRouter initialEntries={[route]}><AppRouter /></MemoryRouter></QueryClientProvider></RepositoryProvider>);
+  return render(<RepositoryProvider repositories={repositories}><QueryClientProvider client={client}><MemoryRouter initialEntries={[route]}><AppRouter profile={profile} onSignOut={async () => undefined} /></MemoryRouter></QueryClientProvider></RepositoryProvider>);
 }
 
 describe('schedule routes', () => {

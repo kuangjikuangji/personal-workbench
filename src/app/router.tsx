@@ -3,6 +3,7 @@ import { Route, Routes, useSearchParams } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { navigation } from './navigation';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
+import type { Profile } from '../features/auth/authTypes';
 
 const TodoPage = lazy(() => import('../features/todos/TodoPage').then((module) => ({ default: module.TodoPage })));
 const CalendarPage = lazy(() => import('../features/calendar/CalendarPage').then((module) => ({ default: module.CalendarPage })));
@@ -28,9 +29,9 @@ function PlaceholderPage({ title }: { title: string }) {
   );
 }
 
-export function AppRouter() {
+export function AppRouter({ profile, onSignOut }: { profile: Profile; onSignOut(): Promise<void> }) {
   return (
-    <AppShell>
+    <AppShell profile={profile} onSignOut={onSignOut}>
       <Suspense fallback={<p role="status">正在加载页面……</p>}><Routes>
         <Route element={<DashboardPage />} path="/" />
         <Route element={<TodoPage />} path="/todos" />

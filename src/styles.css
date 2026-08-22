@@ -21,11 +21,18 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .auth-status { display: grid; min-height: 100dvh; place-items: center; padding: 2rem; }
 .password-page { background: linear-gradient(145deg, #e9f2fb, #f8fbff 55%, #dce9f5); }
 .app-shell { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100dvh; }
-.desktop-sidebar { padding: 1.5rem; color: #fff; background: #173b67; }
+.desktop-sidebar { display: flex; flex-direction: column; padding: 1.5rem; color: #fff; background: #173b67; }
 .desktop-sidebar h1 { margin: 0 0 2rem; font-size: 1.25rem; line-height: 1.4; }
+.desktop-sidebar > nav { flex: 1; }
 .navigation-group { margin: 0 0 1.5rem; }
 .navigation-group h2 { margin: 0 0 .5rem; color: #b9d2ec; font-size: .75rem; font-weight: 600; letter-spacing: .08em; }
 .navigation-link { display: block; width: 100%; padding: .625rem .75rem; border: 0; border-radius: .5rem; color: inherit; background: transparent; font: inherit; font-weight: 600; text-align: left; text-decoration: none; cursor: pointer; }
+.account-summary { display: grid; gap: .75rem; padding: 1rem; border: 1px solid rgb(255 255 255 / 24%); border-radius: .75rem; background: rgb(255 255 255 / 8%); }
+.account-summary div { display: grid; gap: .2rem; }
+.account-summary span { color: #b9d2ec; font-size: .8rem; }
+.account-summary .button { width: 100%; }
+.management-drawer .account-summary { margin-bottom: 1rem; color: #182230; border-color: #d6e0ea; background: #f5f7fb; }
+.management-drawer .account-summary span { color: #526070; }
 .desktop-sidebar .navigation-link:hover, .desktop-sidebar .navigation-link:focus-visible, .desktop-sidebar .navigation-link.is-active { color: #173b67; background: #fff; outline: 0; }
 .app-content { padding: clamp(1.5rem, 5vw, 3rem); }
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
