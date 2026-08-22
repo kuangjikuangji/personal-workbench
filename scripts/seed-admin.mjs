@@ -42,19 +42,34 @@ export async function seedInitialAdmin(client) {
     created = true;
   }
 
-  const { error: profileError } = await client.from("profiles").upsert({
-    id: user.id,
-    username: "admin",
-    role: "admin",
-    is_active: true,
-    must_change_password: true,
-  }, { onConflict: "id" });
-
-  if (profileError) {
-    if (created) {
-      await client.auth.admin.deleteUser(user.id);
+  let profileMissing = created;
+  if (!created) {
+    const { data: existingProfile, error: profileLookupError } = await client
+      .from("profiles")
+      .select("id")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (profileLookupError) {
+      throw new Error("无法查询初始管理员账号资料");
     }
-    throw new Error("无法初始化管理员账号资料");
+    profileMissing = !existingProfile;
+  }
+
+  if (profileMissing) {
+    const { error: profileError } = await client.from("profiles").upsert({
+      id: user.id,
+      username: "admin",
+      role: "admin",
+      is_active: true,
+      must_change_password: true,
+    }, { onConflict: "id" });
+
+    if (profileError) {
+      if (created) {
+        await client.auth.admin.deleteUser(user.id);
+      }
+      throw new Error("无法初始化管理员账号资料");
+    }
   }
 
   return { created, userId: user.id };

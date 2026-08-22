@@ -29,6 +29,7 @@ type FakeState = {
     userId: string;
     patch: Partial<Pick<Profile, "is_active" | "must_change_password">>;
   }>;
+  deactivationCalls: Array<{ actorId: string; targetId: string }>;
 };
 
 function summary(
@@ -45,7 +46,7 @@ function summary(
 function createHarness(options: {
   authenticatedActor?: Profile | null;
   verifiedUserId?: string | null;
-  activeAdminCount?: number;
+  deactivateError?: Error;
   updatePasswordError?: Error;
   updateProfileError?: Error;
 } = {}) {
@@ -55,15 +56,40 @@ function createHarness(options: {
     profiles: [summary(actor)],
     passwordUpdates: [],
     profileUpdates: [],
+    deactivationCalls: [],
   };
 
-  const gateway: AdminGateway = {
+  const gateway: AdminGateway & {
+    deactivateProfile(
+      actorId: string,
+      targetId: string,
+    ): Promise<ProfileSummary>;
+  } = {
     listProfiles: () => Promise.resolve([...state.profiles]),
     getProfile: (userId) =>
       Promise.resolve(
         state.profiles.find((profile) => profile.id === userId) ?? null,
       ),
-    countActiveAdmins: () => Promise.resolve(options.activeAdminCount ?? 1),
+    deactivateProfile: (actorId: string, targetId: string) => {
+      state.events.push("deactivation-rpc");
+      state.deactivationCalls.push({ actorId, targetId });
+      if (options.deactivateError) {
+        return Promise.reject(options.deactivateError);
+      }
+      const current = state.profiles.find((profile) => profile.id === targetId);
+      if (!current) {
+        return Promise.reject(new AdminUsersError("account_not_found"));
+      }
+      const updated = {
+        ...current,
+        is_active: false,
+        updated_at: "2026-08-16T00:00:00.000Z",
+      };
+      state.profiles = state.profiles.map((profile) =>
+        profile.id === targetId ? updated : profile
+      );
+      return Promise.resolve(updated);
+    },
     createAuthUser: ({ email, password }) => {
       state.createdAuthInput = { email, password };
       return Promise.resolve({ id: "new-user-id" });
@@ -235,7 +261,7 @@ Deno.test("administrator creates a normalized account without returning internal
 });
 
 Deno.test("administrator cannot deactivate self or the final active administrator", async () => {
-  const ownHarness = createHarness({ activeAdminCount: 2 });
+  const ownHarness = createHarness();
   const ownResponse = await handleAdminUsersRequest(
     request({ action: "deactivate", targetId: actor.id }),
     ownHarness.dependencies,
@@ -243,13 +269,16 @@ Deno.test("administrator cannot deactivate self or the final active administrato
   assert.equal(ownResponse.status, 409);
   assert.equal((await responseBody(ownResponse)).code, "self_deactivation");
   assert.equal(ownHarness.state.profileUpdates.length, 0);
+  assert.deepEqual(ownHarness.state.deactivationCalls, []);
 
   const otherAdmin = summary({
     ...actor,
     id: "other-admin-id",
     username: "other-admin",
   });
-  const finalHarness = createHarness({ activeAdminCount: 1 });
+  const finalHarness = createHarness({
+    deactivateError: new AdminUsersError("last_admin"),
+  });
   finalHarness.state.profiles.push(otherAdmin);
   const finalResponse = await handleAdminUsersRequest(
     request({ action: "deactivate", targetId: otherAdmin.id }),
@@ -260,7 +289,27 @@ Deno.test("administrator cannot deactivate self or the final active administrato
   assert.equal(finalHarness.state.profileUpdates.length, 0);
 });
 
-Deno.test("administrator reset changes Auth password then marks target for password change", async () => {
+Deno.test("administrator deactivation uses the transactional RPC", async () => {
+  const { state, dependencies } = createHarness();
+  state.profiles.push(
+    summary({ ...actor, id: "member-id", username: "member", role: "member" }),
+  );
+
+  const response = await handleAdminUsersRequest(
+    request({ action: "deactivate", targetId: "member-id" }),
+    dependencies,
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(state.events, ["deactivation-rpc"]);
+  assert.deepEqual(state.deactivationCalls, [{
+    actorId: actor.id,
+    targetId: "member-id",
+  }]);
+  assert.deepEqual(state.profileUpdates, []);
+});
+
+Deno.test("administrator reset marks target before changing Auth password", async () => {
   const { state, dependencies } = createHarness();
   state.profiles.push(
     summary({ ...actor, id: "member-id", username: "member", role: "member" }),
@@ -274,7 +323,7 @@ Deno.test("administrator reset changes Auth password then marks target for passw
     dependencies,
   );
   assert.equal(response.status, 200);
-  assert.deepEqual(state.events, ["auth-password-updated", "profile-updated"]);
+  assert.deepEqual(state.events, ["profile-updated", "auth-password-updated"]);
   assert.deepEqual(state.profileUpdates, [{
     userId: "member-id",
     patch: { must_change_password: true },
@@ -282,6 +331,62 @@ Deno.test("administrator reset changes Auth password then marks target for passw
   assert.equal(
     JSON.stringify(await responseBody(response)).includes("temporary9"),
     false,
+  );
+});
+
+Deno.test("administrator reset does not change Auth when profile flag update fails", async () => {
+  const { state, dependencies } = createHarness({
+    updateProfileError: new Error("database unavailable"),
+  });
+  state.profiles.push(
+    summary({ ...actor, id: "member-id", username: "member", role: "member" }),
+  );
+
+  const response = await handleAdminUsersRequest(
+    request({
+      action: "resetPassword",
+      targetId: "member-id",
+      password: "temporary9",
+    }),
+    dependencies,
+  );
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await responseBody(response), {
+    code: "password_reset_profile_failed",
+    message: "无法标记账号为必须改密，密码未重置",
+  });
+  assert.deepEqual(state.events, ["profile-updated"]);
+  assert.deepEqual(state.passwordUpdates, []);
+});
+
+Deno.test("administrator reset keeps must-change flag when Auth update fails", async () => {
+  const { state, dependencies } = createHarness({
+    updatePasswordError: new Error("auth unavailable"),
+  });
+  state.profiles.push(
+    summary({ ...actor, id: "member-id", username: "member", role: "member" }),
+  );
+
+  const response = await handleAdminUsersRequest(
+    request({
+      action: "resetPassword",
+      targetId: "member-id",
+      password: "temporary9",
+    }),
+    dependencies,
+  );
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await responseBody(response), {
+    code: "password_reset_auth_failed",
+    message: "账号已标记为必须改密，但临时密码重置失败；请重试",
+  });
+  assert.deepEqual(state.events, ["profile-updated", "auth-password-updated"]);
+  assert.equal(
+    state.profiles.find((profile) => profile.id === "member-id")
+      ?.must_change_password,
+    true,
   );
 });
 

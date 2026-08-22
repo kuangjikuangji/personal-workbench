@@ -25,7 +25,7 @@ type ProfilePatch = Partial<
 export interface AdminGateway {
   listProfiles(): Promise<ProfileSummary[]>;
   getProfile(userId: string): Promise<ProfileSummary | null>;
-  countActiveAdmins(): Promise<number>;
+  deactivateProfile(actorId: string, targetId: string): Promise<ProfileSummary>;
   createAuthUser(
     input: { email: string; password: string },
   ): Promise<{ id: string }>;
@@ -72,6 +72,14 @@ const ERROR_DEFINITIONS: Record<string, ErrorDefinition> = {
   password_changed_profile_pending: {
     status: 503,
     message: "密码已修改，但状态更新失败；请使用新密码重试",
+  },
+  password_reset_profile_failed: {
+    status: 503,
+    message: "无法标记账号为必须改密，密码未重置",
+  },
+  password_reset_auth_failed: {
+    status: 503,
+    message: "账号已标记为必须改密，但临时密码重置失败；请重试",
   },
 };
 
@@ -259,22 +267,27 @@ async function handleAdminAction(
   }
 
   if (action === "deactivate") {
-    const activeAdminCount = target.role === "admin" && target.is_active
-      ? await gateway.countActiveAdmins()
-      : 0;
-    assertAdminActor(actor, action, { ...target, activeAdminCount });
+    assertAdminActor(actor, action, target);
     return {
-      data: await gateway.updateProfile(target.id, { is_active: false }),
+      data: await gateway.deactivateProfile(actor.id, target.id),
     };
   }
 
   const password = requirePassword(body, "password");
-  await gateway.updateAuthPassword(target.id, password);
-  return {
-    data: await gateway.updateProfile(target.id, {
+  let flaggedProfile: ProfileSummary;
+  try {
+    flaggedProfile = await gateway.updateProfile(target.id, {
       must_change_password: true,
-    }),
-  };
+    });
+  } catch {
+    throw new AdminUsersError("password_reset_profile_failed");
+  }
+  try {
+    await gateway.updateAuthPassword(target.id, password);
+  } catch {
+    throw new AdminUsersError("password_reset_auth_failed");
+  }
+  return { data: flaggedProfile };
 }
 
 const ADMIN_ACTIONS = new Set<AdminAction>([

@@ -83,6 +83,23 @@ function throwAdminFailure(
   throw new AdminUsersError("service_unavailable");
 }
 
+function throwDeactivationFailure(
+  error: { message?: string } | null,
+): never {
+  const stableCodes = new Set([
+    "account_inactive",
+    "account_not_found",
+    "admin_required",
+    "last_admin",
+    "password_change_required",
+    "self_deactivation",
+  ]);
+  if (error?.message && stableCodes.has(error.message)) {
+    throw new AdminUsersError(error.message);
+  }
+  throw new AdminUsersError("service_unavailable");
+}
+
 function createGateway(serviceClient: SupabaseClient): AdminGateway {
   return {
     async listProfiles() {
@@ -108,16 +125,15 @@ function createGateway(serviceClient: SupabaseClient): AdminGateway {
       return data ? profileSummaryFromRow(data as ProfileRow) : null;
     },
 
-    async countActiveAdmins() {
-      const { count, error } = await serviceClient
-        .from("profiles")
-        .select("id", { count: "exact", head: true })
-        .eq("role", "admin")
-        .eq("is_active", true);
-      if (error || count === null) {
-        throwAdminFailure(error);
+    async deactivateProfile(actorId, targetId) {
+      const { data, error } = await serviceClient.rpc(
+        "admin_deactivate_profile",
+        { p_actor_id: actorId, p_target_id: targetId },
+      );
+      if (error || !data) {
+        throwDeactivationFailure(error);
       }
-      return count;
+      return profileSummaryFromRow(data as ProfileRow);
     },
 
     async createAuthUser({ email, password }) {

@@ -16,7 +16,7 @@ export type AdminAction =
   | "resetPassword";
 
 export type AdminTarget = Pick<Profile, "id" | "role" | "is_active"> & {
-  activeAdminCount: number;
+  activeAdminCount?: number;
 };
 
 export class PolicyError extends Error {
@@ -52,6 +52,7 @@ export function assertAdminActor(
   }
   if (
     target.role === "admin" && target.is_active &&
+    target.activeAdminCount !== undefined &&
     target.activeAdminCount <= 1
   ) {
     throw new PolicyError("last_admin");

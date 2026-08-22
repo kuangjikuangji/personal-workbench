@@ -755,6 +755,24 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      admin_deactivate_profile: {
+        Args: { p_actor_id: string; p_target_id: string }
+        Returns: {
+          created_at: string
+          id: string
+          is_active: boolean
+          must_change_password: boolean
+          role: string
+          updated_at: string
+          username: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       batch_teacher_records: {
         Args: { p_record: Json; p_teacher_ids: string[] }
         Returns: {

@@ -3,11 +3,17 @@ import test from "node:test";
 
 import { seedInitialAdmin } from "./seed-admin.mjs";
 
-function createFakeClient(initialUsers = []) {
+function createFakeClient({
+  initialUsers = [],
+  initialProfiles = [],
+  profileUpsertError = null,
+} = {}) {
   const state = {
     users: structuredClone(initialUsers),
+    profiles: structuredClone(initialProfiles),
     createInputs: [],
     updateInputs: [],
+    deleteInputs: [],
     profileUpserts: [],
   };
 
@@ -36,6 +42,7 @@ function createFakeClient(initialUsers = []) {
           return { data: {}, error: null };
         },
         async deleteUser(userId) {
+          state.deleteInputs.push(userId);
           state.users = state.users.filter((user) => user.id !== userId);
           return { data: {}, error: null };
         },
@@ -44,12 +51,31 @@ function createFakeClient(initialUsers = []) {
     from(table) {
       assert.equal(table, "profiles");
       return {
+        select() {
+          return {
+            eq(column, userId) {
+              assert.equal(column, "id");
+              return {
+                async maybeSingle() {
+                  return {
+                    data: state.profiles.find((profile) => profile.id === userId) ?? null,
+                    error: null,
+                  };
+                },
+              };
+            },
+          };
+        },
         async upsert(profile, options) {
           state.profileUpserts.push({
             profile: structuredClone(profile),
             options: structuredClone(options),
           });
-          return { error: null };
+          if (!profileUpsertError) {
+            state.profiles = state.profiles.filter((existing) => existing.id !== profile.id);
+            state.profiles.push(structuredClone(profile));
+          }
+          return { error: profileUpsertError };
         },
       };
     },
@@ -74,8 +100,8 @@ test("initial admin seed creates the account once and repeated runs never reset 
   }]);
   assert.deepEqual(state.updateInputs, []);
   assert.equal(state.users[0].simulatedPassword, "user-changed-password");
-  assert.equal(state.profileUpserts.length, 2);
-  assert.deepEqual(state.profileUpserts[1], {
+  assert.equal(state.profileUpserts.length, 1);
+  assert.deepEqual(state.profileUpserts[0], {
     profile: {
       id: "admin-user-id",
       username: "admin",
@@ -85,4 +111,69 @@ test("initial admin seed creates the account once and repeated runs never reset 
     },
     options: { onConflict: "id" },
   });
+});
+
+test("reseed preserves every existing profile field and changed password", async () => {
+  const existingUser = {
+    id: "existing-admin-id",
+    email: "admin@users.workbench.invalid",
+    simulatedPassword: "user-changed-password",
+  };
+  const existingProfile = {
+    id: existingUser.id,
+    username: "admin",
+    role: "member",
+    is_active: false,
+    must_change_password: false,
+    created_at: "2026-08-15T00:00:00.000Z",
+    updated_at: "2026-08-16T00:00:00.000Z",
+  };
+  const { client, state } = createFakeClient({
+    initialUsers: [existingUser],
+    initialProfiles: [existingProfile],
+  });
+
+  const result = await seedInitialAdmin(client);
+
+  assert.equal(result.created, false);
+  assert.deepEqual(state.profiles, [existingProfile]);
+  assert.equal(state.users[0].simulatedPassword, "user-changed-password");
+  assert.deepEqual(state.createInputs, []);
+  assert.deepEqual(state.updateInputs, []);
+  assert.deepEqual(state.profileUpserts, []);
+});
+
+test("existing Auth user with missing profile receives initial admin state", async () => {
+  const existingUser = {
+    id: "existing-admin-id",
+    email: "admin@users.workbench.invalid",
+    simulatedPassword: "user-changed-password",
+  };
+  const { client, state } = createFakeClient({ initialUsers: [existingUser] });
+
+  const result = await seedInitialAdmin(client);
+
+  assert.equal(result.created, false);
+  assert.deepEqual(state.profileUpserts, [{
+    profile: {
+      id: existingUser.id,
+      username: "admin",
+      role: "admin",
+      is_active: true,
+      must_change_password: true,
+    },
+    options: { onConflict: "id" },
+  }]);
+  assert.equal(state.users[0].simulatedPassword, "user-changed-password");
+});
+
+test("new Auth user is rolled back when initial profile creation fails", async () => {
+  const { client, state } = createFakeClient({
+    profileUpsertError: { code: "profile_write_failed" },
+  });
+
+  await assert.rejects(() => seedInitialAdmin(client), /无法初始化管理员账号资料/);
+
+  assert.deepEqual(state.deleteInputs, ["admin-user-id"]);
+  assert.deepEqual(state.users, []);
 });
