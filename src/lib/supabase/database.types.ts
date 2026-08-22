@@ -710,8 +710,98 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      add_student_record: {
+        Args: { p_record: Json }
+        Returns: {
+          category: string
+          content: string
+          created_at: string
+          date: string
+          follow_up: string
+          id: string
+          rating: string
+          student_id: string
+          tags: string[]
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "student_records"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      add_teacher_record: {
+        Args: { p_record: Json }
+        Returns: {
+          content: string
+          created_at: string
+          date: string
+          id: string
+          notes: string
+          status: string
+          teacher_id: string
+          title: string
+          type: string
+          updated_at: string
+          user_id: string
+          year: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "teacher_records"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      batch_teacher_records: {
+        Args: { p_record: Json; p_teacher_ids: string[] }
+        Returns: {
+          content: string
+          created_at: string
+          date: string
+          id: string
+          notes: string
+          status: string
+          teacher_id: string
+          title: string
+          type: string
+          updated_at: string
+          user_id: string
+          year: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "teacher_records"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      convert_idea: {
+        Args: { p_idea_id: string; p_target: string }
+        Returns: Json
+      }
       current_user_can_access: { Args: never; Returns: boolean }
       delete_semester: { Args: { p_semester_id: string }; Returns: undefined }
+      fill_missing_teacher_summaries: {
+        Args: { p_year: string }
+        Returns: {
+          created_at: string
+          id: string
+          state: string
+          teacher_id: string
+          updated_at: string
+          user_id: string
+          year: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "teacher_year_summaries"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       import_wechat_todos: {
         Args: { p_todos: Json }
         Returns: {
@@ -737,6 +827,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      restore_backup_v1: { Args: { p_backup: Json }; Returns: undefined }
       save_todo_with_conflict_check: {
         Args: { p_allow_conflicts: boolean; p_todo: Json }
         Returns: Json
