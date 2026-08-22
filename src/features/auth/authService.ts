@@ -1,0 +1,66 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '../../lib/supabase/database.types';
+import type { AuthBackend, Profile } from './authTypes';
+
+export function usernameToInternalEmail(username: string): string {
+  return `${username.trim().toLowerCase()}@users.workbench.invalid`;
+}
+
+type ProfileAuthRow = Pick<
+  Database['public']['Tables']['profiles']['Row'],
+  'id' | 'username' | 'role' | 'is_active' | 'must_change_password'
+>;
+
+function profileFromRow(row: ProfileAuthRow): Profile {
+  if (row.role !== 'admin' && row.role !== 'member') {
+    throw new Error('invalid_profile');
+  }
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    isActive: row.is_active,
+    mustChangePassword: row.must_change_password,
+  };
+}
+
+export function createAuthBackend(client: SupabaseClient<Database>): AuthBackend {
+  return {
+    async getSession() {
+      const { data, error } = await client.auth.getSession();
+      if (error) throw error;
+      return data.session;
+    },
+    subscribe(callback) {
+      const { data } = client.auth.onAuthStateChange((_event, session) => callback(session));
+      return () => data.subscription.unsubscribe();
+    },
+    async getProfile(userId) {
+      const { data, error } = await client
+        .from('profiles')
+        .select('id,username,role,is_active,must_change_password')
+        .eq('id', userId)
+        .maybeSingle();
+      if (error) throw error;
+      return data ? profileFromRow(data) : null;
+    },
+    async signIn(username, password) {
+      const { data, error } = await client.auth.signInWithPassword({
+        email: usernameToInternalEmail(username),
+        password,
+      });
+      if (error || !data.session) throw error ?? new Error('invalid_credentials');
+      return data.session;
+    },
+    async signOut() {
+      const { error } = await client.auth.signOut();
+      if (error) throw error;
+    },
+    async completePasswordChange(currentPassword, newPassword) {
+      const { error } = await client.functions.invoke('admin-users', {
+        body: { action: 'completePasswordChange', currentPassword, newPassword },
+      });
+      if (error) throw error;
+    },
+  };
+}

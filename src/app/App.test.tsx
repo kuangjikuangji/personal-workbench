@@ -1,9 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { App } from './App';
 
-test('renders the Chinese workbench shell', () => {
+test('fails closed when cloud authentication is not configured', async () => {
   render(<App />);
 
-  expect(screen.getByRole('heading', { name: '个人工作学习工作台' })).toBeInTheDocument();
-  expect(screen.getByRole('navigation', { name: '主导航' })).toBeInTheDocument();
+  expect(await screen.findByRole('alert')).toHaveTextContent('系统尚未配置。');
+  expect(screen.queryByRole('navigation', { name: '主导航' })).not.toBeInTheDocument();
 });

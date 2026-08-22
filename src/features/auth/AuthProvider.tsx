@@ -1,0 +1,141 @@
+import { createContext, type PropsWithChildren, useContext, useEffect, useState } from 'react';
+import { createWorkbenchSupabaseClient } from '../../lib/supabase/client';
+import { readSupabaseConfig } from '../../lib/supabase/config';
+import type { SupabaseConfig } from '../../lib/supabase/config';
+import { createAuthBackend } from './authService';
+import type { AuthBackend, AuthIdentity, AuthState } from './authTypes';
+
+type ConfigResult =
+  | { ok: true; value: SupabaseConfig }
+  | { ok: false; message: string };
+
+interface AuthContextValue {
+  state: AuthState;
+  pending: boolean;
+  signIn(username: string, password: string): Promise<void>;
+  completePasswordChange(currentPassword: string, newPassword: string): Promise<void>;
+  signOut(): Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+const defaultConfig = readSupabaseConfig(import.meta.env);
+const defaultBackend = defaultConfig.ok
+  ? createAuthBackend(createWorkbenchSupabaseClient(defaultConfig.value))
+  : null;
+
+function anonymousError(error: unknown): string {
+  if (error instanceof Error && error.message === 'account_inactive') {
+    return '账号已停用，请联系管理员。';
+  }
+  return '账号或密码不正确。';
+}
+
+function passwordError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (message.includes('password_changed_profile_pending')) {
+    return '密码已修改，但状态更新失败；请使用新密码重试。';
+  }
+  if (message.includes('invalid_current_password')) {
+    return '当前密码不正确。';
+  }
+  return '密码修改失败，请稍后重试。';
+}
+
+export function AuthProvider({
+  children,
+  backend: injectedBackend,
+  config = defaultConfig,
+}: PropsWithChildren<{ backend?: AuthBackend; config?: ConfigResult }>) {
+  const [backend] = useState(() => {
+    if (injectedBackend) return injectedBackend;
+    if (!config.ok) return null;
+    if (config === defaultConfig) return defaultBackend;
+    return createAuthBackend(createWorkbenchSupabaseClient(config.value));
+  });
+  const [state, setState] = useState<AuthState>(
+    backend ? { status: 'loading' } : { status: 'misconfigured', message: config.ok ? '系统尚未配置。' : config.message },
+  );
+  const [pending, setPending] = useState(false);
+
+  async function applySession(session: Awaited<ReturnType<AuthBackend['getSession']>>) {
+    if (!backend || !session) {
+      setState({ status: 'anonymous' });
+      return;
+    }
+    const profile = await backend.getProfile(session.user.id);
+    if (!profile) {
+      await backend.signOut();
+      setState({ status: 'anonymous', error: '账号资料不完整，请联系管理员。' });
+      return;
+    }
+    if (!profile.isActive) {
+      await backend.signOut();
+      setState({ status: 'anonymous', error: '账号已停用，请联系管理员。' });
+      return;
+    }
+    const identity: AuthIdentity = { session, profile };
+    setState(profile.mustChangePassword
+      ? { status: 'mustChange', identity }
+      : { status: 'authenticated', identity });
+  }
+
+  useEffect(() => {
+    if (!backend) return;
+    let active = true;
+    void backend.getSession()
+      .then((session) => {
+        if (active) void applySession(session);
+      })
+      .catch(() => {
+        if (active) setState({ status: 'anonymous' });
+      });
+    const unsubscribe = backend.subscribe((session) => {
+      if (active) void applySession(session);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [backend]);
+
+  const value: AuthContextValue = {
+    state,
+    pending,
+    async signIn(username, password) {
+      if (!backend) return;
+      setPending(true);
+      try {
+        await applySession(await backend.signIn(username, password));
+      } catch (error) {
+        setState({ status: 'anonymous', error: anonymousError(error) });
+      } finally {
+        setPending(false);
+      }
+    },
+    async completePasswordChange(currentPassword, newPassword) {
+      if (!backend || state.status !== 'mustChange') return;
+      setPending(true);
+      try {
+        await backend.completePasswordChange(currentPassword, newPassword);
+        await applySession(state.identity.session);
+      } catch (error) {
+        setState({ ...state, error: passwordError(error) });
+      } finally {
+        setPending(false);
+      }
+    },
+    async signOut() {
+      if (!backend) return;
+      await backend.signOut();
+      setState({ status: 'anonymous' });
+    },
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth(): AuthContextValue {
+  const value = useContext(AuthContext);
+  if (!value) throw new Error('useAuth must be used within AuthProvider');
+  return value;
+}
