@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(43);
+select plan(55);
 
 insert into auth.users (
   instance_id,
@@ -181,11 +181,11 @@ select is(
         'save_todo_with_conflict_check', 'import_wechat_todos',
         'set_active_semester', 'delete_semester'
       ])
-      and p.prosecdef = false
+      and p.prosecdef = (p.proname = 'save_todo_with_conflict_check')
       and p.proconfig = array['search_path=""']
   ),
   4::bigint,
-  'schedule RPCs are invoker-rights functions with an empty search path'
+  'the sole todo writer is security definer and every schedule RPC has an empty search path'
 );
 select is(
   (
@@ -203,9 +203,32 @@ select is(
   4::bigint,
   'only authenticated clients receive schedule RPC execution grants'
 );
+select ok(
+  not has_table_privilege('authenticated', 'public.todos', 'INSERT')
+    and not has_table_privilege('authenticated', 'public.todos', 'UPDATE')
+    and has_table_privilege('authenticated', 'public.todos', 'SELECT')
+    and has_table_privilege('authenticated', 'public.todos', 'DELETE'),
+  'authenticated must use RPCs for todo insert/update but retains read/delete access'
+);
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000010', true);
+
+select throws_ok(
+  $$ insert into public.todos (
+       id, title, description, role, priority, status
+     ) values (
+       '10000000-0000-4000-8000-000000000018',
+       'Forbidden direct insert', '', 'personal', 'normal', 'open'
+     ) $$,
+  '42501'
+);
+select throws_ok(
+  $$ update public.todos
+     set description = 'Forbidden direct update'
+     where id = '10000000-0000-4000-8000-000000000010' $$,
+  '42501'
+);
 
 select lives_ok(
   $$ insert into schedule_rpc_results (label, result)
@@ -346,6 +369,101 @@ select is(
 select throws_ok(
   $$ select public.save_todo_with_conflict_check(
        '{
+         "id":"10000000-0000-4000-8000-000000000023",
+         "title":"Date only",
+         "description":"",
+         "role":"personal",
+         "start_at":"2026-09-20",
+         "end_at":null,
+         "remind_at":null,
+         "priority":"normal",
+         "status":"open"
+       }'::jsonb,
+       true
+     ) $$,
+  '22023'
+);
+select throws_ok(
+  $$ select public.save_todo_with_conflict_check(
+       '{
+         "id":"10000000-0000-4000-8000-000000000024",
+         "title":"Infinite timestamp",
+         "description":"",
+         "role":"personal",
+         "start_at":"infinity",
+         "end_at":null,
+         "remind_at":null,
+         "priority":"normal",
+         "status":"open"
+       }'::jsonb,
+       true
+     ) $$,
+  '22023'
+);
+select throws_ok(
+  $$ select public.save_todo_with_conflict_check(
+       '{
+         "id":"10000000-0000-4000-8000-000000000025",
+         "title":"Trailing garbage",
+         "description":"",
+         "role":"personal",
+         "start_at":"2026-09-20T09:00:00+08:00 garbage",
+         "end_at":null,
+         "remind_at":null,
+         "priority":"normal",
+         "status":"open"
+       }'::jsonb,
+       true
+     ) $$,
+  '22023'
+);
+select lives_ok(
+  $$ select public.save_todo_with_conflict_check(
+       '{
+         "id":"10000000-0000-4000-8000-000000000026",
+         "title":"Shanghai local",
+         "description":"",
+         "role":"personal",
+         "start_at":"2026-09-20T09:00:00",
+         "end_at":"2026-09-20T09:30:00",
+         "remind_at":null,
+         "priority":"normal",
+         "status":"open"
+       }'::jsonb,
+       true
+     ) $$,
+  'a complete offsetless ISO datetime is accepted'
+);
+select is(
+  (select start_at from public.todos where id = '10000000-0000-4000-8000-000000000026'),
+  '2026-09-20T01:00:00Z'::timestamptz,
+  'an offsetless ISO datetime is interpreted as Asia/Shanghai wall time'
+);
+select lives_ok(
+  $$ select public.save_todo_with_conflict_check(
+       '{
+         "id":"10000000-0000-4000-8000-000000000027",
+         "title":"Explicit offset",
+         "description":"",
+         "role":"personal",
+         "start_at":"2026-09-20T09:00:00-04:00",
+         "end_at":"2026-09-20T09:30:00-04:00",
+         "remind_at":null,
+         "priority":"normal",
+         "status":"open"
+       }'::jsonb,
+       true
+     ) $$,
+  'a complete ISO datetime with an explicit offset is accepted'
+);
+select is(
+  (select start_at from public.todos where id = '10000000-0000-4000-8000-000000000027'),
+  '2026-09-20T13:00:00Z'::timestamptz,
+  'an explicit ISO offset determines the stored instant'
+);
+select throws_ok(
+  $$ select public.save_todo_with_conflict_check(
+       '{
          "id":"10000000-0000-4000-8000-000000000011",
          "title":"Cross-user overwrite",
          "description":"",
@@ -423,6 +541,47 @@ select is(
   (select count(*) from public.todos where id = '10000000-0000-4000-8000-000000000032'),
   0::bigint,
   'an import payload cannot inject user_id'
+);
+select throws_ok(
+  $$ select * from public.import_wechat_todos(
+       '[
+         {
+           "id":"10000000-0000-4000-8000-000000000035",
+           "title":"Strict batch valid first",
+           "description":"",
+           "role":"personal",
+           "start_at":"2026-09-18T09:00:00+08:00",
+           "end_at":"2026-09-18T09:30:00+08:00",
+           "remind_at":null,
+           "priority":"normal",
+           "status":"open"
+         },
+         {
+           "id":"10000000-0000-4000-8000-000000000036",
+           "title":"Strict batch invalid second",
+           "description":"",
+           "role":"personal",
+           "start_at":"2026-09-18",
+           "end_at":null,
+           "remind_at":null,
+           "priority":"normal",
+           "status":"open"
+         }
+       ]'::jsonb
+     ) $$,
+  '22023'
+);
+select is(
+  (
+    select count(*)
+    from public.todos
+    where id in (
+      '10000000-0000-4000-8000-000000000035',
+      '10000000-0000-4000-8000-000000000036'
+    )
+  ),
+  0::bigint,
+  'a strict timestamp failure rolls back the whole import batch'
 );
 select lives_ok(
   $$ select * from public.import_wechat_todos(

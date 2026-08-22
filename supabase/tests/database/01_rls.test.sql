@@ -53,7 +53,8 @@ values
 insert into public.todos (id, user_id, title, description, role, priority, status)
 values
   ('10000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', 'user-a todo', '', 'personal', 'normal', 'open'),
-  ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000002', 'user-b todo', '', 'personal', 'normal', 'open');
+  ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000002', 'user-b todo', '', 'personal', 'normal', 'open'),
+  ('10000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000001', 'own delete', '', 'personal', 'normal', 'open');
 
 insert into public.semesters (id, user_id, name, start_date, end_date, total_weeks, is_active)
 values
@@ -90,7 +91,7 @@ select is(
 );
 select is(
   (select count(*) from public.todos where user_id = '00000000-0000-4000-8000-000000000001'),
-  1::bigint,
+  2::bigint,
   'an active initialized user can read their own rows'
 );
 select is(
@@ -109,33 +110,25 @@ select is(
   0::bigint,
   'a rejected cross-user insert creates no visible row'
 );
-select lives_ok(
+select throws_ok(
   $$ insert into public.todos (title, description, role, priority, status)
      values ('own insert', '', 'personal', 'normal', 'open') $$,
-  'a user can insert their own row using the auth.uid default'
+  '42501'
 );
 select is(
   (select count(*) from public.todos where title = 'own insert' and user_id = '00000000-0000-4000-8000-000000000001'),
-  1::bigint,
-  'the auth.uid default assigns an inserted row to the current user'
+  0::bigint,
+  'authenticated users cannot bypass the todo save RPC with a direct insert'
 );
-select results_eq(
-  $$ with changed as (
-    update public.todos set title = 'cross update'
-    where id = '10000000-0000-4000-8000-000000000002'
-    returning 1
-  ) select count(*) from changed $$,
-  array[0::bigint],
-  'a user cannot update another user row'
+select throws_ok(
+  $$ update public.todos set title = 'cross update'
+     where id = '10000000-0000-4000-8000-000000000002' $$,
+  '42501'
 );
-select results_eq(
-  $$ with changed as (
-    update public.todos set title = 'own update'
-    where id = '10000000-0000-4000-8000-000000000001'
-    returning 1
-  ) select count(*) from changed $$,
-  array[1::bigint],
-  'a user can update their own row'
+select throws_ok(
+  $$ update public.todos set title = 'own update'
+     where id = '10000000-0000-4000-8000-000000000001' $$,
+  '42501'
 );
 select throws_ok(
   $$ update public.todos
@@ -155,11 +148,11 @@ select results_eq(
 select results_eq(
   $$ with removed as (
     delete from public.todos
-    where title = 'own insert'
+    where id = '10000000-0000-4000-8000-000000000003'
     returning 1
   ) select count(*) from removed $$,
   array[1::bigint],
-  'a user can delete their own row'
+  'a user retains direct delete access to their own todo'
 );
 select throws_ok(
   $$ update public.profiles set role = 'admin'
@@ -311,14 +304,10 @@ select throws_ok(
      values ('inactive insert', '', 'personal', 'normal', 'open') $$,
   '42501'
 );
-select results_eq(
-  $$ with changed as (
-    update public.todos set title = 'inactive update'
-    where id = '10000000-0000-4000-8000-000000000001'
-    returning 1
-  ) select count(*) from changed $$,
-  array[0::bigint],
-  'an inactive user cannot update business rows'
+select throws_ok(
+  $$ update public.todos set title = 'inactive update'
+     where id = '10000000-0000-4000-8000-000000000001' $$,
+  '42501'
 );
 select results_eq(
   $$ with removed as (
@@ -346,14 +335,10 @@ select throws_ok(
      values ('must-change insert', '', 'personal', 'normal', 'open') $$,
   '42501'
 );
-select results_eq(
-  $$ with changed as (
-    update public.todos set title = 'must-change update'
-    where id = '10000000-0000-4000-8000-000000000001'
-    returning 1
-  ) select count(*) from changed $$,
-  array[0::bigint],
-  'a user awaiting password change cannot update business rows'
+select throws_ok(
+  $$ update public.todos set title = 'must-change update'
+     where id = '10000000-0000-4000-8000-000000000001' $$,
+  '42501'
 );
 select results_eq(
   $$ with removed as (
@@ -526,9 +511,14 @@ select is(
         'public.profiles',
         'INSERT, UPDATE, DELETE'
       ))
+      or (table_name = 'todos' and has_table_privilege(
+        'authenticated',
+        'public.todos',
+        'INSERT, UPDATE'
+      ))
   ),
   0::bigint,
-  'authenticated has no truncate, trigger, references, or profile mutation privileges'
+  'authenticated has no elevated privileges, profile mutation, or direct todo writes'
 );
 
 select * from finish();

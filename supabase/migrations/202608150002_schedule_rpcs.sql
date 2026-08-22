@@ -1,9 +1,118 @@
+create function private.parse_schedule_timestamp(p_value jsonb)
+returns timestamptz
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  v_text text;
+  v_result timestamptz;
+begin
+  if jsonb_typeof(p_value) = 'null' then
+    return null;
+  end if;
+  if jsonb_typeof(p_value) is distinct from 'string' then
+    raise exception using errcode = '22023', message = 'malformed_timestamp';
+  end if;
+
+  v_text := p_value #>> '{}';
+  if v_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,6})?)?([zZ]|[+-][0-9]{2}(:?[0-9]{2})?)?$' then
+    raise exception using errcode = '22023', message = 'malformed_timestamp';
+  end if;
+
+  v_result := case
+    when v_text ~* '([zZ]|[+-][0-9]{2}(:?[0-9]{2})?)$' then v_text::timestamptz
+    else v_text::timestamp at time zone 'Asia/Shanghai'
+  end;
+  if not pg_catalog.isfinite(v_result) then
+    raise exception using errcode = '22023', message = 'malformed_timestamp';
+  end if;
+  return v_result;
+exception
+  when sqlstate '22023' then
+    raise;
+  when others then
+    raise exception using errcode = '22023', message = 'malformed_timestamp';
+end;
+$$;
+
+revoke all on function private.parse_schedule_timestamp(jsonb) from public;
+
+create function private.lock_schedule_writer()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_actor_id uuid := auth.uid();
+  v_old_user_id uuid;
+  v_new_user_id uuid;
+begin
+  if tg_op <> 'INSERT' then
+    v_old_user_id := old.user_id;
+  end if;
+  if tg_op <> 'DELETE' then
+    v_new_user_id := new.user_id;
+  end if;
+
+  if v_actor_id is not null then
+    if coalesce(v_old_user_id, v_actor_id) <> v_actor_id
+      or coalesce(v_new_user_id, v_actor_id) <> v_actor_id then
+      raise exception using errcode = '42501', message = 'not_allowed';
+    end if;
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(v_actor_id::text, 202608150002)
+    );
+  elsif v_old_user_id is not null
+    and v_new_user_id is not null
+    and v_old_user_id <> v_new_user_id then
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        least(v_old_user_id::text, v_new_user_id::text),
+        202608150002
+      )
+    );
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        greatest(v_old_user_id::text, v_new_user_id::text),
+        202608150002
+      )
+    );
+  else
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        coalesce(v_new_user_id, v_old_user_id)::text,
+        202608150002
+      )
+    );
+  end if;
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.lock_schedule_writer() from public;
+
+create trigger courses_schedule_writer_lock
+before insert or update or delete on public.courses
+for each row execute function private.lock_schedule_writer();
+
+create trigger semesters_schedule_writer_lock
+before insert or update or delete on public.semesters
+for each row execute function private.lock_schedule_writer();
+
+revoke insert, update on public.todos from authenticated;
+
 create function public.save_todo_with_conflict_check(
   p_todo jsonb,
   p_allow_conflicts boolean
 )
 returns jsonb
 language plpgsql
+security definer
 set search_path = ''
 as $$
 declare
@@ -11,9 +120,6 @@ declare
   v_candidate public.todos;
   v_conflicts jsonb := '[]'::jsonb;
   v_saved public.todos;
-  v_start_text text;
-  v_end_text text;
-  v_remind_text text;
 begin
   if v_user_id is null or not public.current_user_can_access() then
     raise exception using errcode = '42501', message = 'not_allowed';
@@ -83,34 +189,9 @@ begin
       raise exception using errcode = '22023', message = 'malformed_todo';
     end if;
 
-    v_start_text := case
-      when jsonb_typeof(p_todo -> 'start_at') = 'string' then p_todo ->> 'start_at'
-      else null
-    end;
-    v_end_text := case
-      when jsonb_typeof(p_todo -> 'end_at') = 'string' then p_todo ->> 'end_at'
-      else null
-    end;
-    v_remind_text := case
-      when jsonb_typeof(p_todo -> 'remind_at') = 'string' then p_todo ->> 'remind_at'
-      else null
-    end;
-
-    v_candidate.start_at := case
-      when v_start_text is null then null
-      when v_start_text ~* '(z|[+-][0-9]{2}(:?[0-9]{2})?)$' then v_start_text::timestamptz
-      else v_start_text::timestamp at time zone 'Asia/Shanghai'
-    end;
-    v_candidate.end_at := case
-      when v_end_text is null then null
-      when v_end_text ~* '(z|[+-][0-9]{2}(:?[0-9]{2})?)$' then v_end_text::timestamptz
-      else v_end_text::timestamp at time zone 'Asia/Shanghai'
-    end;
-    v_candidate.remind_at := case
-      when v_remind_text is null then null
-      when v_remind_text ~* '(z|[+-][0-9]{2}(:?[0-9]{2})?)$' then v_remind_text::timestamptz
-      else v_remind_text::timestamp at time zone 'Asia/Shanghai'
-    end;
+    v_candidate.start_at := private.parse_schedule_timestamp(p_todo -> 'start_at');
+    v_candidate.end_at := private.parse_schedule_timestamp(p_todo -> 'end_at');
+    v_candidate.remind_at := private.parse_schedule_timestamp(p_todo -> 'remind_at');
 
     if v_candidate.start_at is not null
       and v_candidate.end_at is not null
