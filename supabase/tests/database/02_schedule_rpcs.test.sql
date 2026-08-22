@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(55);
+select plan(67);
 
 insert into auth.users (
   instance_id,
@@ -210,6 +210,53 @@ select ok(
     and has_table_privilege('authenticated', 'public.todos', 'DELETE'),
   'authenticated must use RPCs for todo insert/update but retains read/delete access'
 );
+select is(
+  (
+    select count(*)
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_proc p on p.oid = t.tgfoid
+    join pg_namespace pn on pn.oid = p.pronamespace
+    where n.nspname = 'public'
+      and c.relname in ('courses', 'semesters')
+      and t.tgname = c.relname || '_schedule_writer_lock'
+      and not t.tgisinternal
+      and t.tgtype = 30
+      and pn.nspname = 'private'
+      and p.proname = 'lock_authenticated_schedule_writer'
+  ),
+  2::bigint,
+  'course and semester writes lock per statement before any target row lock'
+);
+select is(
+  (
+    select count(*)
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'private'
+      and p.proname = 'lock_authenticated_schedule_writer'
+      and p.prorettype = 'trigger'::regtype
+      and not p.prosecdef
+      and p.proconfig = array['search_path=""']
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  ),
+  1::bigint,
+  'the statement-lock helper is invoker rights, private, empty-search-path, and not client executable'
+);
+
+set local role anon;
+select throws_ok(
+  $$ insert into public.semesters (
+       id, name, start_date, end_date, total_weeks, is_active
+     ) values (
+       '20000000-0000-4000-8000-000000000019',
+       'Anonymous semester', '2028-01-03', '2028-01-30', 4, false
+     ) $$,
+  '42501'
+);
+reset role;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000010', true);
@@ -228,6 +275,50 @@ select throws_ok(
      set description = 'Forbidden direct update'
      where id = '10000000-0000-4000-8000-000000000010' $$,
   '42501'
+);
+
+select lives_ok(
+  $$ insert into public.semesters (
+       id, name, start_date, end_date, total_weeks, is_active
+     ) values (
+       '20000000-0000-4000-8000-000000000019',
+       'Direct writer lifecycle', '2028-01-03', '2028-01-30', 4, false
+     ) $$,
+  'an initialized authenticated user can directly insert an owned semester'
+);
+select lives_ok(
+  $$ insert into public.courses (
+       id, semester_id, name, location, teacher, weekday,
+       start_time, end_time, start_week, end_week, week_rule, notes
+     ) values (
+       '60000000-0000-4000-8000-000000000019',
+       '20000000-0000-4000-8000-000000000019',
+       'Direct writer lifecycle', '', '', 1, '09:00', '10:00', 1, 4,
+       '{"kind":"every"}'::jsonb, ''
+     ) $$,
+  'an initialized authenticated user can directly insert an owned course'
+);
+select lives_ok(
+  $$ update public.courses
+     set location = 'Updated room'
+     where id = '60000000-0000-4000-8000-000000000019' $$,
+  'a direct course update completes with the schedule writer lock'
+);
+select lives_ok(
+  $$ delete from public.courses
+     where id = '60000000-0000-4000-8000-000000000019' $$,
+  'a direct course delete completes with the schedule writer lock'
+);
+select lives_ok(
+  $$ update public.semesters
+     set name = 'Updated direct writer lifecycle'
+     where id = '20000000-0000-4000-8000-000000000019' $$,
+  'a direct semester update completes with the schedule writer lock'
+);
+select lives_ok(
+  $$ delete from public.semesters
+     where id = '20000000-0000-4000-8000-000000000019' $$,
+  'a direct semester delete completes with the schedule writer lock'
 );
 
 select lives_ok(
@@ -722,6 +813,34 @@ select throws_ok(
 select throws_ok(
   $$ select public.delete_semester('20000000-0000-4000-8000-000000000013') $$,
   '42501'
+);
+select throws_ok(
+  $$ insert into public.semesters (
+       id, name, start_date, end_date, total_weeks, is_active
+     ) values (
+       '20000000-0000-4000-8000-000000000018',
+       'Locked insert', '2028-01-03', '2028-01-30', 4, false
+     ) $$,
+  '42501'
+);
+select results_eq(
+  $$ with changed as (
+       update public.semesters
+       set name = 'Locked update'
+       where id = '20000000-0000-4000-8000-000000000013'
+       returning 1
+     ) select count(*) from changed $$,
+  array[0::bigint],
+  'a must-change user cannot update an owned semester through the statement trigger'
+);
+select results_eq(
+  $$ with removed as (
+       delete from public.semesters
+       where id = '20000000-0000-4000-8000-000000000013'
+       returning 1
+     ) select count(*) from removed $$,
+  array[0::bigint],
+  'a must-change user cannot delete an owned semester through the statement trigger'
 );
 
 reset role;

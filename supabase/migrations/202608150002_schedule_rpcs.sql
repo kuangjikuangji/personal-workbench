@@ -38,71 +38,39 @@ $$;
 
 revoke all on function private.parse_schedule_timestamp(jsonb) from public;
 
-create function private.lock_schedule_writer()
+create function private.lock_authenticated_schedule_writer()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 declare
-  v_actor_id uuid := auth.uid();
-  v_old_user_id uuid;
-  v_new_user_id uuid;
+  v_user_id uuid;
 begin
-  if tg_op <> 'INSERT' then
-    v_old_user_id := old.user_id;
-  end if;
-  if tg_op <> 'DELETE' then
-    v_new_user_id := new.user_id;
+  if current_user <> 'authenticated' then
+    return null;
   end if;
 
-  if v_actor_id is not null then
-    if coalesce(v_old_user_id, v_actor_id) <> v_actor_id
-      or coalesce(v_new_user_id, v_actor_id) <> v_actor_id then
-      raise exception using errcode = '42501', message = 'not_allowed';
-    end if;
-    perform pg_catalog.pg_advisory_xact_lock(
-      pg_catalog.hashtextextended(v_actor_id::text, 202608150002)
-    );
-  elsif v_old_user_id is not null
-    and v_new_user_id is not null
-    and v_old_user_id <> v_new_user_id then
-    perform pg_catalog.pg_advisory_xact_lock(
-      pg_catalog.hashtextextended(
-        least(v_old_user_id::text, v_new_user_id::text),
-        202608150002
-      )
-    );
-    perform pg_catalog.pg_advisory_xact_lock(
-      pg_catalog.hashtextextended(
-        greatest(v_old_user_id::text, v_new_user_id::text),
-        202608150002
-      )
-    );
-  else
-    perform pg_catalog.pg_advisory_xact_lock(
-      pg_catalog.hashtextextended(
-        coalesce(v_new_user_id, v_old_user_id)::text,
-        202608150002
-      )
-    );
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception using errcode = '42501', message = 'not_allowed';
   end if;
 
-  if tg_op = 'DELETE' then
-    return old;
-  end if;
-  return new;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(v_user_id::text, 202608150002)
+  );
+  return null;
 end;
 $$;
 
-revoke all on function private.lock_schedule_writer() from public;
+revoke all on function private.lock_authenticated_schedule_writer() from public;
 
 create trigger courses_schedule_writer_lock
 before insert or update or delete on public.courses
-for each row execute function private.lock_schedule_writer();
+for each statement execute function private.lock_authenticated_schedule_writer();
 
 create trigger semesters_schedule_writer_lock
 before insert or update or delete on public.semesters
-for each row execute function private.lock_schedule_writer();
+for each statement execute function private.lock_authenticated_schedule_writer();
 
 revoke insert, update on public.todos from authenticated;
 
