@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Protect the workbench with Supabase username/password authentication, move all business data to user-isolated Postgres tables with realtime cross-device refresh, and show a respectful PWA installation prompt after login.
+**Goal:** Protect the workbench with Supabase username/password authentication, present the owner-provided campus photo on the login screen, move all business data to user-isolated Postgres tables with realtime cross-device refresh, and show a respectful PWA installation prompt after login.
 
 **Architecture:** Supabase Auth owns credentials and sessions; a `profiles` table owns username, role, active state, and first-login state. Postgres RLS isolates every business row by `auth.uid()`, SQL RPCs replace the local multi-write transactions, and a Supabase repository adapter preserves the existing TypeScript entity API. React gates the application by auth state, subscribes to profile and table changes, blocks cloud writes while offline, and keeps the existing local repository only for tests and explicit dependency injection.
 
@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- Initial account is `admin`; initial password is `admin123`; first login must force a password change.
+- Initial account is `zhoujingjing`; its owner-provided initial password is supplied only through `INITIAL_ADMIN_PASSWORD`; first login must force a password change.
+- The login screen uses the owner-provided campus photo as a bundled responsive background with a readable overlay on desktop and mobile.
 - Public signup is disabled. Only an active, fully initialized administrator can create, reset, activate, or deactivate accounts.
 - Passwords are owned by Supabase Auth. No plaintext or password hash is stored in application tables.
 - The browser receives only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. `SUPABASE_SERVICE_ROLE_KEY` never enters Git, Vite, GitHub Pages, logs, or screenshots.
@@ -40,7 +41,8 @@
 - `src/features/settings/InstallBanner.tsx`: authenticated install prompt and cooldown.
 - `supabase/migrations/*`: schema, RLS, functions, grants, and realtime publication.
 - `supabase/functions/admin-users/*`: server-only account management.
-- `scripts/seed-admin.mjs`: idempotent service-role bootstrap for `admin`.
+- `scripts/seed-admin.mjs`: idempotent service-role bootstrap for `zhoujingjing`, with the password read from the operator environment.
+- `public/login-background.jpg`: optimized local login background derived from the owner-provided campus photo.
 - `supabase/tests/database/*`: pgTAP isolation and RPC rollback tests.
 - `e2e/auth-sync.spec.ts`: login, forced change, account isolation, and two-context sync.
 
@@ -339,6 +341,7 @@ git commit -m "feat: add atomic management RPCs"
 - Create: `supabase/functions/admin-users/policy.ts`
 - Create: `supabase/functions/admin-users/policy.test.ts`
 - Create: `scripts/seed-admin.mjs`
+- Create: `scripts/seed-admin.test.mjs`
 - Modify: `package.json`
 - Modify: `README.md`
 
@@ -379,18 +382,27 @@ Validate the bearer JWT with the anon client, load the actor profile, apply `ass
 
 CORS permits only `http://localhost:5173`, `http://127.0.0.1:5173`, and `https://kuangjikuangji.github.io`; authorization remains JWT-based.
 
-- [ ] **Step 4: Implement idempotent `admin` seed**
+- [ ] **Step 4: Write RED seed configuration tests**
 
-Use `createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })`, search for internal email `admin@users.workbench.invalid`, create it with `admin123` only when absent, and upsert profile `{ username: 'admin', role: 'admin', is_active: true, must_change_password: true }`. Never print the service key or password.
+Test that the seed rejects a missing `INITIAL_ADMIN_PASSWORD`, rejects passwords shorter than eight characters, maps `zhoujingjing` to `zhoujingjing@users.workbench.invalid`, and never returns or prints the password.
 
-- [ ] **Step 5: Verify and commit**
+Run: `node --test scripts/seed-admin.test.mjs`
+
+Expected: FAIL until the seed exposes a testable configuration parser.
+
+- [ ] **Step 5: Implement idempotent `zhoujingjing` seed**
+
+Use `createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })`, require `INITIAL_ADMIN_PASSWORD`, search for internal email `zhoujingjing@users.workbench.invalid`, create it with the supplied password only when absent, and upsert profile `{ username: 'zhoujingjing', role: 'admin', is_active: true, must_change_password: true }`. Never print the service key or password.
+
+- [ ] **Step 6: Verify and commit**
 
 Run:
 
 ```bash
 deno test supabase/functions/admin-users/policy.test.ts
+node --test scripts/seed-admin.test.mjs
 npm run typecheck
-if rg -n "SUPABASE_SERVICE_ROLE_KEY|admin123" dist src; then exit 1; fi
+if rg -n "SUPABASE_SERVICE_ROLE_KEY|INITIAL_ADMIN_PASSWORD" dist src; then exit 1; fi
 ```
 
 Only the server function, seed script, docs, and tests may mention these strings; `src` and `dist` must contain neither.
@@ -415,6 +427,7 @@ git commit -m "feat: add secure account administration"
 - Create: `src/features/auth/ChangePasswordPage.tsx`
 - Create: `src/features/auth/AuthGate.test.tsx`
 - Create: `src/features/auth/LoginPage.test.tsx`
+- Create: `public/login-background.jpg`
 - Modify: `src/app/App.tsx`
 - Modify: `src/styles.css`
 
@@ -425,12 +438,12 @@ git commit -m "feat: add secure account administration"
 
 - [ ] **Step 1: Write RED component tests**
 
-Test exact visible states: loading text; anonymous login only; bad credentials message; inactive profile signs out; must-change page has no main navigation even at `#/todos`; authenticated state renders a child; missing config shows `系统尚未配置。`.
+Test exact visible states: loading text; anonymous login only; bad credentials message; inactive profile signs out; must-change page has no main navigation even at `#/todos`; authenticated state renders a child; missing config shows `系统尚未配置。`. The anonymous login container must expose a background style containing `login-background.jpg`, and the photo must not render after authentication.
 
 Test normalization:
 
 ```ts
-expect(usernameToInternalEmail('  Admin ')).toBe('admin@users.workbench.invalid');
+expect(usernameToInternalEmail('  ZhouJingJing ')).toBe('zhoujingjing@users.workbench.invalid');
 ```
 
 - [ ] **Step 2: Run RED**
@@ -443,7 +456,17 @@ Expected: missing components and service failures.
 
 Use `getSession()` at startup and `onAuthStateChange` afterward. Fetch only the current profile. On inactive/missing profile, call `signOut()` and set a stable Chinese message. Forced password change re-authenticates with current password, calls `updateUser({ password: newPassword })`, invokes `complete_password_change`, then refreshes the profile. Preserve the partial-failure message described in the design.
 
-- [ ] **Step 4: Gate the application before repositories initialize**
+- [ ] **Step 4: Add and style the supplied campus background**
+
+Create the web asset from `/Users/zhoujingjing/Desktop/学校文件/学校照片/4.jpg`:
+
+```bash
+sips -Z 2400 -s format jpeg -s formatOptions 82 "/Users/zhoujingjing/Desktop/学校文件/学校照片/4.jpg" --out public/login-background.jpg
+```
+
+Set the login page background from `${import.meta.env.BASE_URL}login-background.jpg`. Use `background-position: center`, `background-size: cover`, a dark blue gradient overlay, and a high-contrast translucent card. At widths below 640px, keep at least 20px viewport padding and make the card full-width without horizontal overflow. Preserve visible focus rings and respect `prefers-reduced-motion`.
+
+- [ ] **Step 5: Gate the application before repositories initialize**
 
 `App` becomes:
 
@@ -459,7 +482,7 @@ export function App() {
 
 Keep injectable auth/client props for tests. `CloudWorkbench` is introduced in Task 9; temporarily render the existing `AppProviders` only in authenticated state.
 
-- [ ] **Step 5: Verify and commit**
+- [ ] **Step 6: Verify and commit**
 
 Run:
 
@@ -471,7 +494,7 @@ npm run typecheck
 Commit:
 
 ```bash
-git add src/features/auth src/app/App.tsx src/styles.css
+git add src/features/auth src/app/App.tsx src/styles.css public/login-background.jpg
 git commit -m "feat: gate workbench behind Supabase auth"
 ```
 
@@ -765,13 +788,14 @@ git commit -m "feat: add authenticated install prompt"
 
 Cover these exact journeys on desktop and Pixel 7:
 
-1. `admin / admin123` is forced to change password and cannot reach `#/todos` first.
-2. Admin creates a member, resets it, activates/deactivates it, and the member loses business access.
-3. Two browser contexts signed into the same account: context A creates `跨端同步待办`; context B receives and displays it without reload.
-4. A second account cannot see that todo and cannot fetch it through Supabase REST.
-5. Offline mode shows the banner, disables create/edit/delete, and online restoration refreshes data.
-6. Install prompt banner respects dismissal cooldown.
-7. Existing business E2E is updated to authenticate before each journey and still passes.
+1. The seeded `zhoujingjing` account is forced to change its owner-supplied initial password and cannot reach `#/todos` first.
+2. The unauthenticated desktop and Pixel 7 login pages load `login-background.jpg`, keep the form within the viewport, and expose readable labels and focus states.
+3. Admin creates a member, resets it, activates/deactivates it, and the member loses business access.
+4. Two browser contexts signed into the same account: context A creates `跨端同步待办`; context B receives and displays it without reload.
+5. A second account cannot see that todo and cannot fetch it through Supabase REST.
+6. Offline mode shows the banner, disables create/edit/delete, and online restoration refreshes data.
+7. Install prompt banner respects dismissal cooldown.
+8. Existing business E2E is updated to authenticate before each journey and still passes.
 
 Run: `npm run test:e2e`
 
@@ -787,7 +811,7 @@ env:
   VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
 ```
 
-Add a build scan that fails if `SUPABASE_SERVICE_ROLE_KEY`, the real service key value, or `admin123` appears in `dist`.
+Add a build scan that fails if `SUPABASE_SERVICE_ROLE_KEY`, the real service key value, `INITIAL_ADMIN_PASSWORD`, or the operator-supplied initial password appears in `dist`.
 
 - [ ] **Step 3: Run the complete local gate**
 
@@ -833,10 +857,10 @@ npx supabase link --project-ref "$SUPABASE_PROJECT_REF"
 npx supabase db push
 npx supabase config push
 npx supabase functions deploy admin-users
-SUPABASE_URL="$SUPABASE_PROJECT_URL" SUPABASE_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" npm run supabase:seed-admin
+SUPABASE_URL="$SUPABASE_PROJECT_URL" SUPABASE_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" INITIAL_ADMIN_PASSWORD="$INITIAL_ADMIN_PASSWORD" npm run supabase:seed-admin
 ```
 
-`SUPABASE_PROJECT_REF`, `SUPABASE_PROJECT_URL`, and `SUPABASE_SERVICE_ROLE_KEY` are operator-supplied environment variables from the confirmed project. Configure GitHub Actions Variables for URL and anon key through `gh variable set`, not repository files.
+`SUPABASE_PROJECT_REF`, `SUPABASE_PROJECT_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `INITIAL_ADMIN_PASSWORD` are operator-supplied environment variables from the confirmed project. Configure GitHub Actions Variables for URL and anon key through `gh variable set`, not repository files. Never configure the initial password as a GitHub Pages build variable.
 
 - [ ] **Step 7: Push a draft PR and verify hosted CI**
 
