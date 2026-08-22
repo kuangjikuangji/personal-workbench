@@ -6,6 +6,7 @@
 
 - GitHub Pages：<https://kuangjikuangji.github.io/personal-workbench/>
 - 支持从 Chrome/Edge 安装为 PWA；数据当前保存在本机浏览器 IndexedDB 中。
+- 工作台使用 Supabase 账号登录，首次登录后需要修改初始密码。
 
 ## 本地运行
 
@@ -25,7 +26,8 @@ Chrome/Edge 地址栏出现安装图标后可安装为独立应用；手机端�
 
 其他可用脚本：`npm run typecheck`、`npm run test:run` 与 `npm run test:e2e`。
 
-首版仅在浏览器本地保存数据；不会接入账号、Supabase 同步或自动监听微信消息。
+业务数据仍仅保存在当前浏览器本地；本次登录升级不会迁移或清空既有
+IndexedDB 数据，也不会自动监听微信消息。
 
 ## Supabase 账号管理开发
 
@@ -49,15 +51,16 @@ npx supabase db reset
 npx supabase functions serve admin-users
 ```
 
-初始管理员脚本要求仅存在于运维环境的 `SUPABASE_URL` 和
-`SUPABASE_SERVICE_ROLE_KEY`：
+初始管理员脚本要求仅存在于运维环境的 `SUPABASE_URL`、
+`SUPABASE_SERVICE_ROLE_KEY` 和 `INITIAL_ADMIN_PASSWORD`：
 
 ```bash
 SUPABASE_URL="<project-url>" \
 SUPABASE_SERVICE_ROLE_KEY="<server-only-key>" \
+INITIAL_ADMIN_PASSWORD="<owner-provided-initial-password>" \
 npm run supabase:seed-admin
 ```
 
-首次运行会创建内部账号 `admin`，并要求登录后立即改密。重复运行不会重置
-已存在的 Auth 密码。不得将 service-role key 写入前端环境变量、GitHub Pages
-构建变量、Git 或浏览器产物。
+首次运行会创建内部账号 `zhoujingjing`，并要求登录后立即改密。
+重复运行不会重置已存在的 Auth 密码。不得将初始密码或 service-role key
+写入前端环境变量、GitHub Pages 构建变量、Git 或浏览器产物。
