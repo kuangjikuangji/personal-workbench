@@ -33,27 +33,38 @@ export type CloudChange = {
 
 export type CloudGateway = {
   pullAll: () => Promise<CloudChange[]>;
-  apply: (operation: SyncOperation) => Promise<void>;
+  apply: (operation: SyncOperation) => Promise<CloudApplyResult>;
   subscribe: (
     onChange: (change: CloudChange) => void,
     onStatus: (status: string) => void,
   ) => () => Promise<void>;
 };
 
+export type CloudApplyResult = { applied: boolean; change: CloudChange };
+
 type RemoteError = { code?: unknown; status?: unknown };
 type QueryResult = { data: Record<string, unknown>[] | null; error: RemoteError | null };
 
-function classifyError(error: RemoteError): CloudGatewayErrorKind {
-  if (error.status === 401 || error.code === 'PGRST301') return 'auth';
-  if (error.status === 403 || error.code === '42501') return 'permission';
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function classifyError(error: unknown): CloudGatewayErrorKind {
+  const remoteError: RemoteError = isRecord(error)
+    ? { status: error.status, code: error.code }
+    : {};
+
+  if (remoteError.status === 401 || remoteError.code === 'PGRST301') return 'auth';
+  if (remoteError.status === 403 || remoteError.code === '42501') return 'permission';
   if (
-    (typeof error.status === 'number' && error.status >= 400 && error.status < 500)
-    || (typeof error.code === 'string' && error.code.startsWith('22'))
+    (typeof remoteError.status === 'number' && remoteError.status >= 400 && remoteError.status < 500)
+    || (typeof remoteError.code === 'string' && /^(22|23)/.test(remoteError.code))
   ) return 'validation';
   return 'network';
 }
 
-function throwGatewayError(error: RemoteError): never {
+function throwGatewayError(error: unknown): never {
+  if (error instanceof CloudGatewayError) throw error;
   throw new CloudGatewayError(classifyError(error));
 }
 
@@ -93,48 +104,78 @@ function rowsFor(
   return client.from(entityKind).select('*').eq('user_id', userId) as unknown as Promise<QueryResult>;
 }
 
+function normalizeApplyResult(entityKind: EntityKind, data: unknown): CloudApplyResult {
+  if (!isRecord(data) || typeof data.applied !== 'boolean' || !isRecord(data.row)) {
+    throw new CloudGatewayError('validation');
+  }
+
+  return { applied: data.applied, change: normalizeChange(entityKind, data.row) };
+}
+
 export function createCloudGateway(client: SupabaseClient<Database>, userId: string): CloudGateway {
   const entityKinds = Object.keys(entityRegistry) as EntityKind[];
 
   return {
     async pullAll() {
-      const results = await Promise.all(entityKinds.map(async (entityKind) => {
-        const { data, error } = await rowsFor(client, entityKind, userId);
-        if (error) throwGatewayError(error);
-        return (data ?? []).map((row) => normalizeChange(entityKind, row));
-      }));
+      try {
+        const results = await Promise.all(entityKinds.map(async (entityKind) => {
+          const { data, error } = await rowsFor(client, entityKind, userId);
+          if (error) throwGatewayError(error);
+          return (data ?? []).map((row) => normalizeChange(entityKind, row));
+        }));
 
-      return results.flat();
+        return results.flat();
+      } catch (error) {
+        return throwGatewayError(error);
+      }
     },
 
     async apply(operation) {
-      const { error } = await client.rpc('apply_workbench_change', {
-        p_table: operation.entityKind,
-        p_record: operationRecord(operation) as unknown as Json,
-        p_client_updated_at: operation.clientUpdatedAt,
-        p_deleted_at: operation.type === 'delete' ? operation.clientUpdatedAt : null,
-      });
-      if (error) throwGatewayError(error);
+      try {
+        const { data, error } = await client.rpc('apply_workbench_change', {
+          p_table: operation.entityKind,
+          p_record: operationRecord(operation) as unknown as Json,
+          p_client_updated_at: operation.clientUpdatedAt,
+          p_deleted_at: operation.type === 'delete' ? operation.clientUpdatedAt : null,
+        });
+        if (error) throwGatewayError(error);
+        return normalizeApplyResult(operation.entityKind, data);
+      } catch (error) {
+        return throwGatewayError(error);
+      }
     },
 
     subscribe(onChange, onStatus) {
-      let active = true;
-      const channel = entityKinds.reduce<RealtimeChannel>((current, entityKind) => current.on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: entityKind, filter: `user_id=eq.${userId}` },
-        (payload) => {
-          if (active) onChange(normalizeChange(entityKind, payload.new as Record<string, unknown>));
-        },
-      ), client.channel(`workbench-sync-${userId}`));
+      try {
+        let active = true;
+        const channel = entityKinds.reduce<RealtimeChannel>((current, entityKind) => current.on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: entityKind, filter: `user_id=eq.${userId}` },
+          (payload) => {
+            if (!active) return;
+            const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+            const change = normalizeChange(entityKind, row as Record<string, unknown>);
+            onChange(payload.eventType === 'DELETE'
+              ? { ...change, deletedAt: payload.commit_timestamp ?? change.serverUpdatedAt }
+              : change);
+          },
+        ), client.channel(`workbench-sync-${userId}`));
 
-      channel.subscribe((status) => {
-        if (active) onStatus(status);
-      });
+        channel.subscribe((status) => {
+          if (active) onStatus(status);
+        });
 
-      return async () => {
-        active = false;
-        await client.removeChannel(channel);
-      };
+        return async () => {
+          active = false;
+          try {
+            await client.removeChannel(channel);
+          } catch (error) {
+            return throwGatewayError(error);
+          }
+        };
+      } catch (error) {
+        return throwGatewayError(error);
+      }
     },
   };
 }
