@@ -57,11 +57,19 @@ function gateway(): CloudGateway {
 
 function engine(overrides: Partial<SyncEngine> = {}): SyncEngine {
   return {
-    start: vi.fn(async () => undefined),
-    retry: vi.fn(async () => undefined),
+    start: vi.fn(async () => true),
+    retry: vi.fn(async () => true),
     stop: vi.fn(async () => undefined),
     ...overrides,
   };
+}
+
+async function markCompletedMirror(database: WorkbenchDatabase, owner = userId): Promise<void> {
+  const completedAt = '2026-08-23T00:00:00.000Z';
+  await database.syncMetadata.bulkPut([
+    { key: 'mirrorOwner', value: owner, updatedAt: completedAt },
+    { key: 'lastFullSyncAt', value: { userId: owner, completedAt }, updatedAt: completedAt },
+  ]);
 }
 
 function dependencies(
@@ -171,7 +179,9 @@ test('creates one user-scoped repository and engine and preserves them across re
 test('gates business content on the initial cloud load and exposes store state with retry', async () => {
   const database = createDatabase();
   let finishInitialLoad: (() => void) | undefined;
-  const initialLoad = new Promise<void>((resolve) => { finishInitialLoad = resolve; });
+  const initialLoad = new Promise<boolean>((resolve) => {
+    finishInitialLoad = () => resolve(true);
+  });
   const syncEngine = engine({ start: vi.fn(() => initialLoad) });
   const syncDependencies = dependencies(database, syncEngine, { online: () => true });
 
@@ -196,13 +206,9 @@ test('gates business content on the initial cloud load and exposes store state w
 
 test('allows offline startup only from an existing mirror owned by the same user', async () => {
   const database = createDatabase();
-  await database.syncMetadata.put({
-    key: 'mirrorOwner',
-    value: userId,
-    updatedAt: '2026-08-23T00:00:00.000Z',
-  });
+  await markCompletedMirror(database);
   let finishStart: (() => void) | undefined;
-  const starting = new Promise<void>((resolve) => { finishStart = resolve; });
+  const starting = new Promise<boolean>((resolve) => { finishStart = () => resolve(false); });
   const syncEngine = engine({ start: vi.fn(() => starting) });
 
   render(
@@ -221,15 +227,42 @@ test('allows offline startup only from an existing mirror owned by the same user
   finishStart?.();
 });
 
-test('keeps a different user\'s offline mirror behind the cloud-loading gate', async () => {
+test('keeps a same-user offline mirror closed until a completed full sync is verified', async () => {
   const database = createDatabase();
   await database.syncMetadata.put({
     key: 'mirrorOwner',
-    value: 'another-user',
+    value: userId,
     updatedAt: '2026-08-23T00:00:00.000Z',
   });
   let finishStart: (() => void) | undefined;
-  const starting = new Promise<void>((resolve) => { finishStart = resolve; });
+  const starting = new Promise<boolean>((resolve) => { finishStart = () => resolve(false); });
+  const syncEngine = engine({ start: vi.fn(() => starting) });
+
+  render(
+    <AuthProvider backend={authBackend()}>
+      <SyncProvider
+        dependencies={dependencies(database, syncEngine, { online: () => false })}
+        identity={identity}
+      >
+        {() => <div>unverified same-user mirror</div>}
+      </SyncProvider>
+    </AuthProvider>,
+  );
+
+  await waitFor(() => expect(syncEngine.start).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole('status')).toHaveTextContent('正在加载云端数据');
+  expect(screen.queryByText('unverified same-user mirror')).not.toBeInTheDocument();
+
+  finishStart?.();
+  expect(await screen.findByRole('alert')).toHaveTextContent('云端数据尚未安全加载');
+  expect(screen.queryByText('unverified same-user mirror')).not.toBeInTheDocument();
+});
+
+test('keeps a different user\'s offline mirror behind the cloud-loading gate', async () => {
+  const database = createDatabase();
+  await markCompletedMirror(database, 'another-user');
+  let finishStart: (() => void) | undefined;
+  const starting = new Promise<boolean>((resolve) => { finishStart = () => resolve(false); });
   const syncEngine = engine({ start: vi.fn(() => starting) });
   const syncDependencies = dependencies(database, syncEngine, { online: () => false });
 
@@ -246,7 +279,90 @@ test('keeps a different user\'s offline mirror behind the cloud-loading gate', a
   expect(screen.queryByText('different-user offline mirror')).not.toBeInTheDocument();
 
   finishStart?.();
-  expect(await screen.findByText('different-user offline mirror')).toBeInTheDocument();
+  expect(await screen.findByRole('alert')).toHaveTextContent('云端数据尚未安全加载');
+  expect(screen.queryByText('different-user offline mirror')).not.toBeInTheDocument();
+});
+
+test('keeps online pull failure closed instead of exposing unverified business data', async () => {
+  const database = createDatabase();
+  const syncEngine = engine({ start: vi.fn(async () => false) });
+
+  render(
+    <AuthProvider backend={authBackend()}>
+      <SyncProvider
+        dependencies={dependencies(database, syncEngine, { online: () => true })}
+        identity={identity}
+      >
+        {() => <div>unverified online data</div>}
+      </SyncProvider>
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('云端数据尚未安全加载');
+  expect(screen.queryByText('unverified online data')).not.toBeInTheDocument();
+});
+
+test('fails closed on owner lookup errors and can retry the complete startup boundary', async () => {
+  const database = createDatabase();
+  const originalGet = database.syncMetadata.get.bind(database.syncMetadata);
+  vi.spyOn(database.syncMetadata, 'get')
+    .mockRejectedValueOnce(new Error('owner lookup failed'))
+    .mockImplementation(originalGet);
+  const firstEngine = engine();
+  const secondEngine = engine();
+  const createEngine = vi.fn()
+    .mockReturnValueOnce(firstEngine)
+    .mockReturnValueOnce(secondEngine);
+
+  render(
+    <AuthProvider backend={authBackend()}>
+      <SyncProvider
+        dependencies={dependencies(database, firstEngine, { createEngine })}
+        identity={identity}
+      >
+        {() => <div>owner-verified content</div>}
+      </SyncProvider>
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('云端数据尚未安全加载');
+  expect(screen.queryByText('owner-verified content')).not.toBeInTheDocument();
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '重试' }));
+
+  expect(await screen.findByText('owner-verified content')).toBeInTheDocument();
+  expect(firstEngine.start).not.toHaveBeenCalled();
+  expect(firstEngine.stop).toHaveBeenCalledTimes(1);
+  expect(secondEngine.start).toHaveBeenCalledTimes(1);
+});
+
+test('fails closed when engine ownership setup rejects and retries with a new engine', async () => {
+  const database = createDatabase();
+  const firstEngine = engine({ start: vi.fn(async () => { throw new Error('owner clear failed'); }) });
+  const secondEngine = engine();
+  const createEngine = vi.fn()
+    .mockReturnValueOnce(firstEngine)
+    .mockReturnValueOnce(secondEngine);
+
+  render(
+    <AuthProvider backend={authBackend()}>
+      <SyncProvider
+        dependencies={dependencies(database, firstEngine, { createEngine })}
+        identity={identity}
+      >
+        {() => <div>cleared-owner content</div>}
+      </SyncProvider>
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('云端数据尚未安全加载');
+  expect(screen.queryByText('cleared-owner content')).not.toBeInTheDocument();
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '重试' }));
+
+  expect(await screen.findByText('cleared-owner content')).toBeInTheDocument();
+  expect(firstEngine.stop).toHaveBeenCalledTimes(1);
+  expect(secondEngine.start).toHaveBeenCalledTimes(1);
 });
 
 test('awaits engine stop and current-user mirror cleanup before revealing anonymous UI', async () => {

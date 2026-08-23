@@ -32,7 +32,7 @@ test('uses injected synchronization dependencies with an injected authentication
     completePasswordChange: async () => undefined,
   };
   const database = new WorkbenchDatabase(`app-sync-${crypto.randomUUID()}`);
-  const start = vi.fn(async () => undefined);
+  const start = vi.fn(async () => true);
   const dependencies: SyncProviderDependencies = {
     client: {} as SupabaseClient<Database>,
     database,
@@ -42,7 +42,7 @@ test('uses injected synchronization dependencies with an injected authentication
       subscribe: () => ({ ready: Promise.resolve(), unsubscribe: async () => undefined }),
     })),
     createRepositories: vi.fn((db, userId) => createSyncedRepositories(db, userId)),
-    createEngine: vi.fn(() => ({ start, retry: async () => undefined, stop: async () => undefined })),
+    createEngine: vi.fn(() => ({ start, retry: async () => true, stop: async () => undefined })),
   };
 
   const view = render(<App authBackend={backend} syncDependencies={dependencies} />);

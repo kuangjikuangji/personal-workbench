@@ -7,6 +7,7 @@ import type { EntityKind, SyncOperation } from './types';
 
 const retryDelays = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
 const versionPrefix = 'remoteVersion:';
+export const lastFullSyncMetadataKey = 'lastFullSyncAt';
 
 type Version = {
   modifiedAt: string;
@@ -22,8 +23,8 @@ type SyncEngineOptions = {
 };
 
 export type SyncEngine = {
-  start: () => Promise<void>;
-  retry: () => Promise<void>;
+  start: () => Promise<boolean>;
+  retry: () => Promise<boolean>;
   stop: () => Promise<void>;
 };
 
@@ -165,11 +166,11 @@ export function createSyncEngine({
   let unsubscribe: (() => Promise<void>) | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryIndex = 0;
-  let syncInFlight: Promise<void> | null = null;
+  let syncInFlight: Promise<boolean> | null = null;
   let synchronizationRequested = false;
   let remoteWork = Promise.resolve();
   let queueSubscription: { unsubscribe: () => void } | null = null;
-  let initializationPromise: Promise<void> | null = null;
+  let initializationPromise: Promise<boolean> | null = null;
   let stopPromise: Promise<void> | null = null;
   let signalStop: (() => void) | undefined;
   const stopRequested = new Promise<void>((resolve) => { signalStop = resolve; });
@@ -296,6 +297,13 @@ export function createSyncEngine({
       for (const change of changes) await applyRemoteChange(db, change);
       await flushQueue();
       if (!active) return false;
+      const completedAt = now().toISOString();
+      await db.syncMetadata.put({
+        key: lastFullSyncMetadataKey,
+        value: { userId, completedAt },
+        updatedAt: completedAt,
+      });
+      if (!active) return false;
       retryIndex = 0;
       initialPullComplete = true;
       clearRetryTimer();
@@ -306,8 +314,8 @@ export function createSyncEngine({
     }
   }
 
-  function synchronize(): Promise<void> {
-    if (!active) return Promise.resolve();
+  function synchronize(): Promise<boolean> {
+    if (!active) return Promise.resolve(false);
     if (syncInFlight) {
       synchronizationRequested = true;
       return syncInFlight;
@@ -316,12 +324,14 @@ export function createSyncEngine({
     synchronizationActive = true;
     syncInFlight = (async () => {
       await publishState();
-      if (!active) return;
+      if (!active) return false;
+      let completed = false;
       do {
         synchronizationRequested = false;
-        const completed = await performSynchronization();
+        completed = await performSynchronization();
         if (!completed) synchronizationRequested = false;
       } while (active && synchronizationRequested);
+      return completed;
     })().finally(async () => {
       synchronizationActive = false;
       syncInFlight = null;
@@ -403,37 +413,37 @@ export function createSyncEngine({
     if (active && online()) void retry();
   }
 
-  async function initialize(): Promise<void> {
+  async function initialize(): Promise<boolean> {
     await ensureMirrorOwner();
-    if (!active) return;
+    if (!active) return false;
 
     const subscription = gateway.subscribe(handleRemoteChange, handleChannelStatus);
     unsubscribe = subscription.unsubscribe;
     await Promise.race([subscription.ready, stopRequested]);
-    if (!active) return;
+    if (!active) return false;
     channelReady = true;
     if (typeof window !== 'undefined') {
       window.addEventListener('online', handleResume);
       window.addEventListener('focus', handleResume);
     }
     await Promise.race([observeQueue(), stopRequested]);
-    if (!active) return;
-    await synchronize();
+    if (!active) return false;
+    return synchronize();
   }
 
-  function start(): Promise<void> {
+  function start(): Promise<boolean> {
     if (initializationPromise) return initializationPromise;
-    if (stopped) return Promise.resolve();
+    if (stopped) return Promise.resolve(false);
     active = true;
     initializationPromise = initialize();
     return initializationPromise;
   }
 
-  async function retry(): Promise<void> {
-    if (!active) return;
+  async function retry(): Promise<boolean> {
+    if (!active) return false;
     clearRetryTimer();
     retryIndex = 0;
-    await synchronize();
+    return synchronize();
   }
 
   function stop(): Promise<void> {
@@ -453,7 +463,8 @@ export function createSyncEngine({
     unsubscribe = null;
     const cleanupPromise = cleanup?.() ?? Promise.resolve();
     stopPromise = (async () => {
-      await Promise.all([initializationPromise ?? Promise.resolve(), cleanupPromise]);
+      const initialization = (initializationPromise ?? Promise.resolve(false)).catch(() => false);
+      await Promise.all([initialization, cleanupPromise]);
       const inFlight = syncInFlight;
       if (inFlight) await inFlight;
       await remoteWork.catch(() => undefined);

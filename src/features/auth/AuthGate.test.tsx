@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Session } from '@supabase/supabase-js';
 import { AuthGate } from './AuthGate';
 import { AuthProvider } from './AuthProvider';
 import type { AuthBackend, Profile } from './authTypes';
+import { vi } from 'vitest';
 
 const session = { user: { id: 'user-1' } } as Session;
 const activeProfile: Profile = {
@@ -101,6 +102,73 @@ test('renders protected content after restoring an authenticated profile', async
   );
 
   expect(await screen.findByText('已登录：zhoujingjing')).toBeInTheDocument();
+});
+
+test('ignores an older deferred profile after a newer anonymous session event', async () => {
+  let emitSession: ((nextSession: Session | null) => void) | undefined;
+  let finishProfile: ((nextProfile: Profile) => void) | undefined;
+  const deferredProfile = new Promise<Profile>((resolve) => { finishProfile = resolve; });
+  const getProfile = vi.fn(() => deferredProfile);
+  render(
+    <AuthProvider backend={backend({
+      getSession: async () => session,
+      subscribe: (callback) => {
+        emitSession = callback;
+        return () => undefined;
+      },
+      getProfile,
+    })}>
+      <AuthGate>{() => <nav aria-label="主导航" />}</AuthGate>
+    </AuthProvider>,
+  );
+
+  await waitFor(() => expect(getProfile).toHaveBeenCalledTimes(1));
+  act(() => { emitSession?.(null); });
+  expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument();
+
+  await act(async () => {
+    finishProfile?.(activeProfile);
+    await deferredProfile;
+  });
+
+  expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument();
+  expect(screen.queryByRole('navigation', { name: '主导航' })).not.toBeInTheDocument();
+});
+
+test('does not sign out a newer identity when an older inactive profile resolves late', async () => {
+  const newerSession = { user: { id: 'user-2' } } as Session;
+  const newerProfile: Profile = { ...activeProfile, id: 'user-2', username: 'newer-user' };
+  let emitSession: ((nextSession: Session | null) => void) | undefined;
+  let finishOlderProfile: ((nextProfile: Profile) => void) | undefined;
+  const olderProfile = new Promise<Profile>((resolve) => { finishOlderProfile = resolve; });
+  const signOut = vi.fn(async () => undefined);
+  render(
+    <AuthProvider backend={backend({
+      getSession: async () => session,
+      subscribe: (callback) => {
+        emitSession = callback;
+        return () => undefined;
+      },
+      getProfile: async (requestedUserId) => (
+        requestedUserId === 'user-1' ? olderProfile : newerProfile
+      ),
+      signOut,
+    })}>
+      <AuthGate>{(currentIdentity) => <div>已登录：{currentIdentity.profile.username}</div>}</AuthGate>
+    </AuthProvider>,
+  );
+
+  await waitFor(() => expect(emitSession).toBeDefined());
+  act(() => { emitSession?.(newerSession); });
+  expect(await screen.findByText('已登录：newer-user')).toBeInTheDocument();
+
+  await act(async () => {
+    finishOlderProfile?.({ ...activeProfile, isActive: false });
+    await olderProfile;
+  });
+
+  expect(screen.getByText('已登录：newer-user')).toBeInTheDocument();
+  expect(signOut).not.toHaveBeenCalled();
 });
 
 test('fails closed when Supabase configuration is absent', async () => {

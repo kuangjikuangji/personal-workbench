@@ -17,7 +17,11 @@ import { useAuth } from '../features/auth/AuthProvider';
 import type { AuthIdentity } from '../features/auth/authTypes';
 import type { Database } from '../lib/supabase/database.types';
 import { createCloudGateway } from './cloudGateway';
-import { createSyncEngine, type SyncEngine } from './syncEngine';
+import {
+  createSyncEngine,
+  lastFullSyncMetadataKey,
+  type SyncEngine,
+} from './syncEngine';
 import { resetSyncState, syncStore } from './syncStore';
 
 export interface SyncProviderDependencies {
@@ -38,6 +42,12 @@ const SyncContext = createContext<SyncContextValue | null>(null);
 
 function browserOnline(): boolean {
   return typeof navigator === 'undefined' || navigator.onLine;
+}
+
+function isCompletedMirror(value: unknown, userId: string): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const marker = value as { userId?: unknown; completedAt?: unknown };
+  return marker.userId === userId && typeof marker.completedAt === 'string';
 }
 
 export function SyncProvider({
@@ -65,7 +75,11 @@ export function SyncProvider({
     [buildRepositories, database, userId],
   );
   const engineRef = useRef<SyncEngine | null>(null);
-  const [readyUserId, setReadyUserId] = useState<string | null>(null);
+  const [startup, setStartup] = useState<{
+    userId: string;
+    status: 'loading' | 'error' | 'ready';
+  }>({ userId, status: 'loading' });
+  const [startupAttempt, setStartupAttempt] = useState(0);
   const retry = useCallback(async () => {
     await engineRef.current?.retry();
   }, []);
@@ -73,6 +87,7 @@ export function SyncProvider({
 
   useEffect(() => {
     let active = true;
+    let offlineMirrorReady = false;
     let stopPromise: Promise<void> | null = null;
     let cleanupPromise: Promise<void> | null = null;
     const gateway = buildGateway(client, userId);
@@ -86,34 +101,61 @@ export function SyncProvider({
     };
     const cleanup = () => {
       cleanupPromise ??= (async () => {
-        await stop();
+        await stop().catch(() => undefined);
         await clearMirror(database, userId);
         resetSyncState();
       })();
       return cleanupPromise;
     };
     const unregisterCleanup = auth.registerSignOutCleanup(cleanup);
+    setStartup({ userId, status: 'loading' });
 
     void (async () => {
-      const owner = await database.syncMetadata.get('mirrorOwner');
+      const [owner, completedSync] = await Promise.all([
+        database.syncMetadata.get('mirrorOwner'),
+        database.syncMetadata.get(lastFullSyncMetadataKey),
+      ]);
       if (!active) return;
-      if (!online() && owner?.value === userId) setReadyUserId(userId);
-      await engine.start();
-      if (active) setReadyUserId(userId);
+      offlineMirrorReady = !online()
+        && owner?.value === userId
+        && isCompletedMirror(completedSync?.value, userId);
+      if (offlineMirrorReady) setStartup({ userId, status: 'ready' });
+
+      const reconciled = await engine.start();
+      if (!active || offlineMirrorReady) return;
+      setStartup({ userId, status: reconciled ? 'ready' : 'error' });
     })().catch(() => {
-      if (active) setReadyUserId(userId);
+      if (active && !offlineMirrorReady) setStartup({ userId, status: 'error' });
     });
 
     return () => {
       active = false;
       unregisterCleanup();
       if (engineRef.current === engine) engineRef.current = null;
-      void stop();
+      void stop().catch(() => undefined);
     };
-  }, [auth.registerSignOutCleanup, buildEngine, buildGateway, clearMirror, client, database, online, userId]);
+  }, [
+    auth.registerSignOutCleanup,
+    buildEngine,
+    buildGateway,
+    clearMirror,
+    client,
+    database,
+    online,
+    startupAttempt,
+    userId,
+  ]);
 
-  if (readyUserId !== userId) {
+  if (startup.userId !== userId || startup.status === 'loading') {
     return <main className="auth-status" role="status">正在加载云端数据…</main>;
+  }
+  if (startup.status === 'error') {
+    return (
+      <main className="auth-status auth-error" role="alert">
+        <p>云端数据尚未安全加载。</p>
+        <button type="button" onClick={() => setStartupAttempt((attempt) => attempt + 1)}>重试</button>
+      </main>
+    );
   }
 
   return <SyncContext.Provider value={context}>{children(repositories)}</SyncContext.Provider>;

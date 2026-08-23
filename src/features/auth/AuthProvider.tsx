@@ -62,6 +62,7 @@ export function AuthProvider({
   );
   const [pending, setPending] = useState(false);
   const signOutCleanups = useRef(new Set<() => Promise<void>>());
+  const transitionEpoch = useRef(0);
 
   const registerSignOutCleanup = useCallback((cleanup: () => Promise<void>) => {
     signOutCleanups.current.add(cleanup);
@@ -72,46 +73,70 @@ export function AuthProvider({
     await Promise.all([...signOutCleanups.current].map((cleanup) => cleanup()));
   }
 
-  async function applySession(session: Awaited<ReturnType<AuthBackend['getSession']>>) {
-    if (!backend || !session) {
+  function beginTransition(): number {
+    transitionEpoch.current += 1;
+    return transitionEpoch.current;
+  }
+
+  function isCurrentTransition(epoch: number): boolean {
+    return transitionEpoch.current === epoch;
+  }
+
+  async function applySession(
+    session: Awaited<ReturnType<AuthBackend['getSession']>>,
+    epoch: number,
+  ) {
+    if (!backend || !isCurrentTransition(epoch)) return;
+    if (!session) {
       await runSignOutCleanups();
-      setState({ status: 'anonymous' });
+      if (isCurrentTransition(epoch)) setState({ status: 'anonymous' });
       return;
     }
     const profile = await backend.getProfile(session.user.id);
+    if (!isCurrentTransition(epoch)) return;
     if (!profile) {
       await runSignOutCleanups();
+      if (!isCurrentTransition(epoch)) return;
       await backend.signOut();
-      setState({ status: 'anonymous', error: '账号资料不完整，请联系管理员。' });
+      if (isCurrentTransition(epoch)) {
+        setState({ status: 'anonymous', error: '账号资料不完整，请联系管理员。' });
+      }
       return;
     }
     if (!profile.isActive) {
       await runSignOutCleanups();
+      if (!isCurrentTransition(epoch)) return;
       await backend.signOut();
-      setState({ status: 'anonymous', error: '账号已停用，请联系管理员。' });
+      if (isCurrentTransition(epoch)) {
+        setState({ status: 'anonymous', error: '账号已停用，请联系管理员。' });
+      }
       return;
     }
     const identity: AuthIdentity = { session, profile };
-    setState(profile.mustChangePassword
-      ? { status: 'mustChange', identity }
-      : { status: 'authenticated', identity });
+    if (isCurrentTransition(epoch)) {
+      setState(profile.mustChangePassword
+        ? { status: 'mustChange', identity }
+        : { status: 'authenticated', identity });
+    }
   }
 
   useEffect(() => {
     if (!backend) return;
     let active = true;
+    const restoreEpoch = beginTransition();
     void backend.getSession()
       .then((session) => {
-        if (active) void applySession(session);
+        if (active) void applySession(session, restoreEpoch);
       })
       .catch(() => {
-        if (active) setState({ status: 'anonymous' });
+        if (active && isCurrentTransition(restoreEpoch)) setState({ status: 'anonymous' });
       });
     const unsubscribe = backend.subscribe((session) => {
-      if (active) void applySession(session);
+      if (active) void applySession(session, beginTransition());
     });
     return () => {
       active = false;
+      beginTransition();
       unsubscribe();
     };
   }, [backend]);
@@ -122,34 +147,40 @@ export function AuthProvider({
     registerSignOutCleanup,
     async signIn(username, password) {
       if (!backend) return;
+      const epoch = beginTransition();
       setPending(true);
       try {
-        await applySession(await backend.signIn(username, password));
+        await applySession(await backend.signIn(username, password), epoch);
       } catch (error) {
-        setState({ status: 'anonymous', error: anonymousError(error) });
+        if (isCurrentTransition(epoch)) {
+          setState({ status: 'anonymous', error: anonymousError(error) });
+        }
       } finally {
         setPending(false);
       }
     },
     async completePasswordChange(currentPassword, newPassword) {
       if (!backend || state.status !== 'mustChange') return;
+      const epoch = beginTransition();
       setPending(true);
       try {
         await backend.completePasswordChange(currentPassword, newPassword);
-        await applySession(state.identity.session);
+        await applySession(state.identity.session, epoch);
       } catch (error) {
-        setState({ ...state, error: passwordError(error) });
+        if (isCurrentTransition(epoch)) setState({ ...state, error: passwordError(error) });
       } finally {
         setPending(false);
       }
     },
     async signOut() {
       if (!backend) return;
+      const epoch = beginTransition();
       setPending(true);
       try {
         await runSignOutCleanups();
+        if (!isCurrentTransition(epoch)) return;
         await backend.signOut();
-        setState({ status: 'anonymous' });
+        if (isCurrentTransition(epoch)) setState({ status: 'anonymous' });
       } finally {
         setPending(false);
       }

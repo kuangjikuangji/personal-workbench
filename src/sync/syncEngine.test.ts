@@ -308,11 +308,34 @@ describe('sync engine startup and remote merge', () => {
     const controls = createGateway({ pullAll: async () => [teacherChange(), settingChange()] });
     const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
 
-    await engine.start();
+    const ready = await engine.start();
 
+    expect(ready).toBe(true);
     expect(await db.teachers.get('teacher-1')).toEqual(teacher());
     expect(await db.settings.get('dashboard-layout')).toEqual(settingChange().value);
+    expect(await db.syncMetadata.get('lastFullSyncAt')).toEqual({
+      key: 'lastFullSyncAt',
+      value: { userId, completedAt: now().toISOString() },
+      updatedAt: now().toISOString(),
+    });
     expect(syncStore.getState()).toEqual({ status: 'synced', pendingCount: 0, message: null });
+    await engine.stop();
+  });
+
+  test('reports failed initial reconciliation and does not mark the mirror as fully synchronized', async () => {
+    const db = createDatabase();
+    const controls = createGateway({ pullAll: async () => { throw new Error('initial pull failed'); } });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    const ready = await engine.start();
+
+    expect(ready).toBe(false);
+    expect(await db.syncMetadata.get('lastFullSyncAt')).toBeUndefined();
+    expect(syncStore.getState()).toEqual({
+      status: 'error',
+      pendingCount: 0,
+      message: 'initial pull failed',
+    });
     await engine.stop();
   });
 
