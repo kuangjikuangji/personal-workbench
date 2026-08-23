@@ -1,3 +1,5 @@
+import { QueryClient } from '@tanstack/react-query';
+import { useCallback, useState } from 'react';
 import { AppProviders } from './providers';
 import { AppRouter } from './router';
 import { WorkbenchDatabase } from '../db/database';
@@ -22,13 +24,22 @@ function AuthenticatedWorkbench({
   syncDependencies: SyncProviderDependencies | null;
 }) {
   const auth = useAuth();
+  const [queryClient] = useState(() => new QueryClient());
+  const refreshQueries = useCallback(() => {
+    void queryClient.invalidateQueries();
+  }, [queryClient]);
   if (!syncDependencies) {
     return <main className="auth-status auth-error" role="alert">同步服务尚未配置。</main>;
   }
   return (
-    <SyncProvider dependencies={syncDependencies} identity={identity} key={identity.session.user.id}>
+    <SyncProvider
+      dependencies={syncDependencies}
+      identity={identity}
+      key={identity.session.user.id}
+      onRemoteChange={refreshQueries}
+    >
       {(repositories) => (
-        <AppProviders repositories={repositories}>
+        <AppProviders queryClient={queryClient} repositories={repositories}>
           <AppRouter profile={identity.profile} onSignOut={auth.signOut} syncStatus={<SyncStatus />} />
         </AppProviders>
       )}

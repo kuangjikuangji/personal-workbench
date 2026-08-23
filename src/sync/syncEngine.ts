@@ -14,12 +14,15 @@ type Version = {
   deleted: boolean;
 };
 
+export type RemoteChangeListener = (entityKind: EntityKind) => void;
+
 type SyncEngineOptions = {
   db: WorkbenchDatabase;
   gateway: CloudGateway;
   userId: string;
   now?: () => Date;
   online?: () => boolean;
+  onRemoteChange?: RemoteChangeListener;
 };
 
 export type SyncEngine = {
@@ -152,6 +155,7 @@ export function createSyncEngine({
   userId,
   now = () => new Date(),
   online = browserOnline,
+  onRemoteChange,
 }: SyncEngineOptions): SyncEngine {
   let active = false;
   let stopped = false;
@@ -382,7 +386,8 @@ export function createSyncEngine({
       try {
         await publishState();
         if (!active) return;
-        await applyRemoteChange(db, change);
+        const accepted = await applyRemoteChange(db, change);
+        if (active && accepted) onRemoteChange?.(change.entityKind);
       } catch (error) {
         await handleFailure(error);
       } finally {

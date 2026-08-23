@@ -20,6 +20,7 @@ import { createCloudGateway } from './cloudGateway';
 import {
   createSyncEngine,
   lastFullSyncMetadataKey,
+  type RemoteChangeListener,
   type SyncEngine,
 } from './syncEngine';
 import { resetSyncState, syncStore } from './syncStore';
@@ -54,10 +55,12 @@ export function SyncProvider({
   children,
   dependencies,
   identity,
+  onRemoteChange,
 }: {
   children(repositories: Repositories): ReactNode;
   dependencies: SyncProviderDependencies;
   identity: AuthIdentity;
+  onRemoteChange?: RemoteChangeListener;
 }) {
   const auth = useAuth();
   const userId = identity.session.user.id;
@@ -91,7 +94,7 @@ export function SyncProvider({
     let stopPromise: Promise<void> | null = null;
     let cleanupPromise: Promise<void> | null = null;
     const gateway = buildGateway(client, userId);
-    const engine = buildEngine({ db: database, gateway, userId, online });
+    const engine = buildEngine({ db: database, gateway, userId, online, onRemoteChange });
     engineRef.current = engine;
     resetSyncState();
 
@@ -142,6 +145,7 @@ export function SyncProvider({
     client,
     database,
     online,
+    onRemoteChange,
     startupAttempt,
     userId,
   ]);

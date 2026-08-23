@@ -23,9 +23,81 @@ export type ScheduleFixture = {
   todoStart: string;
 };
 
+export type SyncTestCredentials = {
+  password: string;
+  username: string;
+};
+
+const workbenchMirrorTableNames = [
+  'todos',
+  'semesters',
+  'courses',
+  'teachers',
+  'teacherYearSummaries',
+  'teacherRecords',
+  'mentorships',
+  'researchItems',
+  'learningMethods',
+  'ideas',
+  'lessonPlans',
+  'students',
+  'studentRecords',
+  'settings',
+  'syncOperations',
+] as const;
+
 export function appPath(route = '/'): string {
   const normalized = route === '/' ? '/' : `/${route.replace(/^\/+/, '')}`;
   return `/personal-workbench/#${normalized}`;
+}
+
+export function readSyncTestCredentials(): SyncTestCredentials | null {
+  const username = process.env.E2E_SYNC_USERNAME?.trim();
+  const password = process.env.E2E_SYNC_PASSWORD;
+  return username && password ? { username, password } : null;
+}
+
+export async function loginWithSyncTestAccount(
+  page: Page,
+  credentials: SyncTestCredentials,
+): Promise<void> {
+  await page.goto(appPath('/todos'));
+  await page.getByLabel('账号').fill(credentials.username);
+  await page.getByLabel('密码').fill(credentials.password);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '待办管理', exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.sync-status')).toHaveText('已同步', { timeout: 30_000 });
+}
+
+export async function ensureOfflineReloadIsControlled(page: Page): Promise<void> {
+  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+  if (!await page.evaluate(() => navigator.serviceWorker.controller !== null)) {
+    await page.reload();
+    await expect(page.getByRole('heading', { name: '待办管理', exact: true })).toBeVisible();
+  }
+  expect(await page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
+}
+
+export async function readWorkbenchMirrorCounts(page: Page): Promise<Record<string, number>> {
+  return page.evaluate(async (tableNames) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('personal-workbench');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+    });
+
+    try {
+      const transaction = database.transaction(tableNames, 'readonly');
+      const counts = await Promise.all(tableNames.map((tableName) => new Promise<number>((resolve, reject) => {
+        const request = transaction.objectStore(tableName).count();
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      })));
+      return Object.fromEntries(tableNames.map((tableName, index) => [tableName, counts[index]]));
+    } finally {
+      database.close();
+    }
+  }, [...workbenchMirrorTableNames]);
 }
 
 function localDateParts(date: Date): string {

@@ -33,6 +33,15 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+      - name: Install Chromium for synchronization verification
+        run: npx playwright install --with-deps chromium
+      - name: Verify realtime and offline synchronization
+        run: npx playwright test e2e/realtime-sync.spec.ts --project=chromium-desktop
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          E2E_SYNC_USERNAME: ${{ secrets.E2E_SYNC_USERNAME }}
+          E2E_SYNC_PASSWORD: ${{ secrets.E2E_SYNC_PASSWORD }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

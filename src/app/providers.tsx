@@ -21,9 +21,10 @@ export function useRepositories(): Repositories {
 
 export function AppProviders({
   children,
+  queryClient,
   repositories,
-}: PropsWithChildren<{ repositories: Repositories }>) {
-  const [client] = useState(() => new QueryClient());
+}: PropsWithChildren<{ queryClient?: QueryClient; repositories: Repositories }>) {
+  const [client] = useState(() => queryClient ?? new QueryClient());
 
   return (
     <RepositoryProvider repositories={repositories}>

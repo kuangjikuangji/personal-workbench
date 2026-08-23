@@ -4,7 +4,7 @@ import { WorkbenchDatabase } from '../db/database';
 import type { CloudApplyResult, CloudChange, CloudGateway } from './cloudGateway';
 import { applyRemoteChange, createSyncEngine as buildSyncEngine, type SyncEngine } from './syncEngine';
 import { resetSyncState, syncStore } from './syncStore';
-import type { SyncOperation } from './types';
+import type { EntityKind, SyncOperation } from './types';
 
 const userId = 'user-1';
 const now = () => new Date('2026-08-23T12:00:00.000Z');
@@ -206,6 +206,44 @@ describe('sync engine startup and remote merge', () => {
     await starting;
 
     expect(await db.teachers.get('teacher-1')).toEqual(teacher(thirdTime, '实时老师'));
+    await engine.stop();
+  });
+
+  test('notifies feature queries only after accepting a realtime change into the mirror', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.teachers.add(teacher(thirdTime, '当前老师'));
+    const controls = createGateway();
+    const onRemoteChange = vi.fn<(entityKind: EntityKind) => void>();
+    const engine = createSyncEngine({
+      db,
+      gateway: controls.gateway,
+      userId,
+      now,
+      online: () => true,
+      onRemoteChange,
+    });
+
+    await engine.start();
+    expect(onRemoteChange).not.toHaveBeenCalled();
+
+    controls.emit(teacherChange({
+      value: teacher(firstTime, '过期老师'),
+      clientUpdatedAt: firstTime,
+      serverUpdatedAt: firstTime,
+    }));
+    await settleIndexedDb();
+    expect(onRemoteChange).not.toHaveBeenCalled();
+
+    controls.emit(teacherChange({
+      value: teacher(now().toISOString(), '实时老师'),
+      clientUpdatedAt: now().toISOString(),
+      serverUpdatedAt: now().toISOString(),
+    }));
+    await waitForValue(() => db.teachers.get('teacher-1'), teacher(now().toISOString(), '实时老师'));
+
+    expect(onRemoteChange).toHaveBeenCalledTimes(1);
+    expect(onRemoteChange).toHaveBeenCalledWith('teachers');
     await engine.stop();
   });
 
