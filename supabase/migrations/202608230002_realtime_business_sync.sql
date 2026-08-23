@@ -69,8 +69,41 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  new.server_updated_at := now();
+  if tg_op = 'INSERT' then
+    new.server_updated_at := clock_timestamp();
+  else
+    new.server_updated_at := greatest(
+      clock_timestamp(),
+      old.server_updated_at + interval '1 microsecond'
+    );
+  end if;
   return new;
+end;
+$$;
+
+do $$
+declare
+  table_name text;
+begin
+  foreach table_name in array array[
+    'todos', 'semesters', 'courses', 'teachers',
+    'teacher_year_summaries', 'teacher_records', 'mentorships',
+    'research_items', 'learning_methods', 'ideas', 'lesson_plans',
+    'students', 'student_records', 'app_settings'
+  ]
+  loop
+    execute format(
+      'drop trigger %I on public.%I',
+      table_name || '_set_updated_at',
+      table_name
+    );
+    execute format(
+      'create trigger %I before insert or update on public.%I
+       for each row execute function private.set_updated_at()',
+      table_name || '_set_updated_at',
+      table_name
+    );
+  end loop;
 end;
 $$;
 
@@ -115,8 +148,7 @@ begin
   ]) || jsonb_build_object(
     'user_id', v_user_id,
     'updated_at', p_client_updated_at,
-    'deleted_at', p_deleted_at,
-    'server_updated_at', clock_timestamp()
+    'deleted_at', p_deleted_at
   );
 
   insert into public.todos as target (
@@ -171,11 +203,28 @@ grant execute on function sync_private.apply_todo_change(
   jsonb, timestamptz, timestamptz
 ) to authenticated, service_role;
 
+create function sync_private.parse_deleted_at(p_value jsonb)
+returns timestamptz
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select case
+    when p_value is null or jsonb_typeof(p_value) = 'null' then null
+    else private.parse_schedule_timestamp(p_value)
+  end;
+$$;
+
+revoke all on function sync_private.parse_deleted_at(jsonb) from public;
+grant execute on function sync_private.parse_deleted_at(jsonb)
+  to authenticated, service_role;
+
 create function public.apply_workbench_change(
   p_table text,
   p_record jsonb,
   p_client_updated_at timestamptz,
-  p_deleted_at timestamptz
+  p_deleted_at jsonb
 )
 returns jsonb
 language plpgsql
@@ -189,6 +238,7 @@ declare
   v_assignments text;
   v_conflict_columns text;
   v_entity_identity text;
+  v_deleted_at timestamptz;
   v_row jsonb;
   v_applied boolean := false;
 begin
@@ -210,6 +260,8 @@ begin
     raise exception using errcode = '22023', message = 'client_updated_at_required';
   end if;
 
+  v_deleted_at := sync_private.parse_deleted_at(p_deleted_at);
+
   if p_table = 'app_settings' then
     v_entity_identity := p_record ->> 'key';
     v_conflict_columns := 'user_id, key';
@@ -225,7 +277,7 @@ begin
     return sync_private.apply_todo_change(
       p_record,
       p_client_updated_at,
-      p_deleted_at
+      v_deleted_at
     );
   end if;
 
@@ -234,8 +286,7 @@ begin
   ]) || jsonb_build_object(
     'user_id', v_user_id,
     'updated_at', p_client_updated_at,
-    'deleted_at', p_deleted_at,
-    'server_updated_at', clock_timestamp()
+    'deleted_at', v_deleted_at
   );
 
   select
@@ -304,8 +355,8 @@ end;
 $$;
 
 revoke all on function public.apply_workbench_change(
-  text, jsonb, timestamptz, timestamptz
+  text, jsonb, timestamptz, jsonb
 ) from public;
 grant execute on function public.apply_workbench_change(
-  text, jsonb, timestamptz, timestamptz
+  text, jsonb, timestamptz, jsonb
 ) to authenticated, service_role;

@@ -864,7 +864,7 @@ export type Database = {
       apply_workbench_change: {
         Args: {
           p_client_updated_at: string
-          p_deleted_at: string
+          p_deleted_at: Json
           p_record: Json
           p_table: string
         }
