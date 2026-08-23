@@ -90,3 +90,67 @@ the no-reload assertion. Under the controller's Task 8 scope expansion:
   outside the assertion.
 - Confirmed all changes are local repository changes and no external state was
   mutated.
+
+## Fix round 1: offline identity restoration and account cache isolation
+
+Two P1 review findings were reproduced and fixed locally.
+
+### Secure offline profile fallback
+
+- Added a browser-storage adapter that persists only `id`, `username`, `role`,
+  `isActive`, and `mustChangePassword`, under a key scoped to the Supabase user
+  ID. Reads validate every field and reject a payload whose ID differs from the
+  requested session user.
+- Production authentication uses the browser cache by default; injected auth
+  backends remain cache-isolated unless a test explicitly supplies an adapter.
+- A successful profile request that starts online updates the cache. A rejected
+  profile request may use it only while the browser is offline, the persisted
+  session has a future `expires_at`, the cache matches that session user, the
+  profile is active, and `mustChangePassword` is false.
+- Online failure, missing/different/expired session, inactive cache, and forced
+  password change all fail closed to an actionable anonymous state instead of
+  leaving authentication indefinitely at `loading`.
+- Explicit sign-out removes the current profile cache. Direct A-to-B session
+  replacement removes A's cache and awaits registered mirror cleanup before B
+  is resolved.
+
+TDD evidence:
+
+- Cache RED: `npm run test:run -- src/features/auth/authService.test.ts` failed
+  because `createOfflineProfileCache` did not exist. GREEN: 2 tests passed.
+- Provider RED: `npm run test:run -- src/features/auth/AuthGate.test.tsx`
+  produced seven unhandled profile-fetch rejections and left the UI at
+  `正在验证登录状态…`; the sign-out test also showed no profile had been cached.
+- Account-transition RED: the focused test expected A's cache to be absent
+  after B rendered but received A's profile. GREEN: AuthProvider/auth-service
+  coverage passes 22 tests.
+
+### QueryClient isolation across identity replacement
+
+- Keyed the QueryClient-owning `AuthenticatedWorkbench` by
+  `identity.session.user.id`, so direct A-to-B replacement unmounts A's query
+  cache before B's repositories render.
+- Added an integration test that keeps B's todo request pending after B's
+  profile becomes visible. Before the fix, A's private cached todo remained in
+  the DOM. After the key was added, A's todo is absent and only B's todo renders
+  when B's request resolves.
+- Preserved the accepted-Realtime-change invalidation callback and the inner
+  user-keyed SyncProvider lifecycle.
+
+### E2E and documentation
+
+- Strengthened the offline-reload boundary to assert the same account username
+  and `离线，1 项待同步` after reload, in addition to the queued edited todo.
+- Documented the minimal offline identity cache, unexpired same-user session
+  requirement, fail-closed cases, and cache removal on sign-out.
+
+### Fix-round verification
+
+- Focused auth/App/Sync command: 5 files and 65 tests passed.
+- `npx playwright test e2e/realtime-sync.spec.ts --project=chromium-desktop`
+  exited 0 with the expected one skip because the approved credential variables
+  remain absent. The credentialed offline reload remains controller-owned.
+- `npm run typecheck` exited 0.
+- Full Vitest: 47 files and 288 tests passed.
+- `npm run build` exited 0 with only the known Vite large-chunk advisory.
+- No remote account, Supabase, GitHub, or Pages state was changed.

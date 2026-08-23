@@ -3,8 +3,9 @@ import userEvent from '@testing-library/user-event';
 import type { Session } from '@supabase/supabase-js';
 import { AuthGate } from './AuthGate';
 import { AuthProvider, useAuth } from './AuthProvider';
+import { createOfflineProfileCache, type OfflineProfileCache } from './authService';
 import type { AuthBackend, Profile } from './authTypes';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 
 const session = { user: { id: 'user-1' } } as Session;
 const activeProfile: Profile = {
@@ -14,6 +15,19 @@ const activeProfile: Profile = {
   isActive: true,
   mustChangePassword: false,
 };
+
+function persistentSession(userId = 'user-1', expiresAt = 4_102_444_800): Session {
+  return { user: { id: userId }, expires_at: expiresAt } as Session;
+}
+
+function profileCache(): OfflineProfileCache {
+  const values = new Map<string, string>();
+  return createOfflineProfileCache({
+    getItem: (key) => values.get(key) ?? null,
+    removeItem: (key) => { values.delete(key); },
+    setItem: (key, value) => { values.set(key, value); },
+  });
+}
 
 function backend(overrides: Partial<AuthBackend> = {}): AuthBackend {
   return {
@@ -35,6 +49,10 @@ function SignOutControl() {
     </button>
   );
 }
+
+afterEach(() => {
+  window.localStorage.clear();
+});
 
 test('shows only the login page for an anonymous visitor', async () => {
   render(
@@ -111,6 +129,178 @@ test('renders protected content after restoring an authenticated profile', async
   );
 
   expect(await screen.findByText('已登录：zhoujingjing')).toBeInTheDocument();
+});
+
+test('restores a validated cached profile only after an offline profile fetch failure', async () => {
+  const cache = profileCache();
+  const restoredSession = persistentSession();
+  const online = render(
+    <AuthProvider backend={backend({ getSession: async () => restoredSession })} online={() => true} profileCache={cache}>
+      <AuthGate>{(identity) => <div>已登录：{identity.profile.username}</div>}</AuthGate>
+    </AuthProvider>,
+  );
+  expect(await screen.findByText('已登录：zhoujingjing')).toBeInTheDocument();
+  online.unmount();
+
+  render(
+    <AuthProvider
+      backend={backend({
+        getSession: async () => restoredSession,
+        getProfile: async () => { throw new Error('network unavailable'); },
+      })}
+      online={() => false}
+      profileCache={cache}
+    >
+      <AuthGate>{(identity) => <div>离线恢复：{identity.profile.username}</div>}</AuthGate>
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByText('离线恢复：zhoujingjing')).toBeInTheDocument();
+});
+
+test('does not use the cached profile when the profile request fails while online', async () => {
+  const cache = profileCache();
+  cache.write(activeProfile);
+  render(
+    <AuthProvider
+      backend={backend({
+        getSession: async () => persistentSession(),
+        getProfile: async () => { throw new Error('service unavailable'); },
+      })}
+      online={() => true}
+      profileCache={cache}
+    >
+      <AuthGate>{() => <div>protected workbench</div>}</AuthGate>
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('登录状态验证失败');
+  expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
+});
+
+test.each([
+  {
+    name: 'another user session',
+    session: persistentSession('user-2'),
+    cached: activeProfile,
+  },
+  {
+    name: 'expired session',
+    session: persistentSession('user-1', 1),
+    cached: activeProfile,
+  },
+  {
+    name: 'inactive cached profile',
+    session: persistentSession(),
+    cached: { ...activeProfile, isActive: false },
+  },
+  {
+    name: 'forced-password-change cached profile',
+    session: persistentSession(),
+    cached: { ...activeProfile, mustChangePassword: true },
+  },
+])('fails closed offline for $name', async ({ session: restoredSession, cached }) => {
+  const cache = profileCache();
+  cache.write(cached);
+  render(
+    <AuthProvider
+      backend={backend({
+        getSession: async () => restoredSession,
+        getProfile: async () => { throw new Error('offline'); },
+      })}
+      online={() => false}
+      profileCache={cache}
+    >
+      <AuthGate>{() => <div>protected workbench</div>}</AuthGate>
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('离线登录状态无法验证');
+  expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
+});
+
+test('does not consult a cache when no persisted session exists', async () => {
+  const cache = profileCache();
+  cache.write(activeProfile);
+  const getProfile = vi.fn(async () => activeProfile);
+  render(
+    <AuthProvider
+      backend={backend({ getSession: async () => null, getProfile })}
+      online={() => false}
+      profileCache={cache}
+    >
+      <AuthGate>{() => <div>protected workbench</div>}</AuthGate>
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument();
+  expect(getProfile).not.toHaveBeenCalled();
+});
+
+test('keeps injected backends isolated from the browser profile cache by default', async () => {
+  createOfflineProfileCache(window.localStorage).write(activeProfile);
+  render(
+    <AuthProvider backend={backend({
+      getSession: async () => persistentSession(),
+      getProfile: async () => { throw new Error('offline'); },
+    })} online={() => false}>
+      <AuthGate>{() => <div>protected workbench</div>}</AuthGate>
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('离线登录状态无法验证');
+  expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
+});
+
+test('removes the cached profile on explicit sign-out', async () => {
+  const cache = profileCache();
+  render(
+    <AuthProvider
+      backend={backend({ getSession: async () => persistentSession() })}
+      online={() => true}
+      profileCache={cache}
+    >
+      <AuthGate>{() => <><div>protected workbench</div><SignOutControl /></>}</AuthGate>
+    </AuthProvider>,
+  );
+  await screen.findByText('protected workbench');
+  expect(cache.read('user-1')).toEqual(activeProfile);
+
+  await userEvent.setup().click(screen.getByRole('button', { name: 'end session' }));
+
+  expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument();
+  expect(cache.read('user-1')).toBeNull();
+});
+
+test('removes the previous cached profile on a direct account replacement', async () => {
+  const cache = profileCache();
+  const secondSession = persistentSession('user-2');
+  const secondProfile: Profile = { ...activeProfile, id: 'user-2', username: 'second-user' };
+  let emitSession: ((nextSession: Session | null) => void) | undefined;
+  render(
+    <AuthProvider
+      backend={backend({
+        getSession: async () => persistentSession(),
+        subscribe: (callback) => {
+          emitSession = callback;
+          return () => undefined;
+        },
+        getProfile: async (userId) => userId === 'user-1' ? activeProfile : secondProfile,
+      })}
+      online={() => true}
+      profileCache={cache}
+    >
+      <AuthGate>{(identity) => <div>已登录：{identity.profile.username}</div>}</AuthGate>
+    </AuthProvider>,
+  );
+  expect(await screen.findByText('已登录：zhoujingjing')).toBeInTheDocument();
+  expect(cache.read('user-1')).toEqual(activeProfile);
+
+  act(() => { emitSession?.(secondSession); });
+
+  expect(await screen.findByText('已登录：second-user')).toBeInTheDocument();
+  expect(cache.read('user-1')).toBeNull();
+  expect(cache.read('user-2')).toEqual(secondProfile);
 });
 
 test('ignores an older deferred profile after a newer anonymous session event', async () => {

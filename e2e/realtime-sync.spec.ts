@@ -101,7 +101,9 @@ test('synchronizes realtime and offline todo changes, then clears both local mir
 
     await pageA.reload();
     await expect(pageA.getByRole('heading', { name: '待办管理', exact: true })).toBeVisible();
+    await expect(pageA.getByLabel('当前账号')).toContainText(credentials.username);
     await expect(pageA.getByText(offlineTitle, { exact: true })).toBeVisible();
+    await expect(pageA.locator('.sync-status')).toContainText('离线，1 项待同步');
     await terminalA.setOffline(false);
     await expect(pageB.getByText(offlineTitle, { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(pageB.getByText(createdTitle, { exact: true })).toHaveCount(0);

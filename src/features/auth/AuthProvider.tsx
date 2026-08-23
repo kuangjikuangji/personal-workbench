@@ -10,7 +10,11 @@ import {
 import { getWorkbenchSupabaseClient } from '../../lib/supabase/client';
 import { readSupabaseConfig } from '../../lib/supabase/config';
 import type { SupabaseConfig } from '../../lib/supabase/config';
-import { createAuthBackend } from './authService';
+import {
+  createAuthBackend,
+  createOfflineProfileCache,
+  type OfflineProfileCache,
+} from './authService';
 import type { AuthBackend, AuthIdentity, AuthState } from './authTypes';
 
 type ConfigResult =
@@ -47,15 +51,43 @@ function passwordError(error: unknown): string {
   return '密码修改失败，请稍后重试。';
 }
 
+function browserOnline(): boolean {
+  return typeof navigator === 'undefined' || navigator.onLine;
+}
+
+function hasUnexpiredSession(session: AuthIdentity['session']): boolean {
+  return typeof session.expires_at === 'number' && session.expires_at * 1_000 > Date.now();
+}
+
+function createBrowserProfileCache(): OfflineProfileCache | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return createOfflineProfileCache(window.localStorage);
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({
   children,
   backend: injectedBackend,
   config = defaultConfig,
-}: PropsWithChildren<{ backend?: AuthBackend; config?: ConfigResult }>) {
+  online = browserOnline,
+  profileCache: injectedProfileCache,
+}: PropsWithChildren<{
+  backend?: AuthBackend;
+  config?: ConfigResult;
+  online?: () => boolean;
+  profileCache?: OfflineProfileCache | null;
+}>) {
   const [backend] = useState(() => {
     if (injectedBackend) return injectedBackend;
     if (!config.ok) return null;
     return createAuthBackend(getWorkbenchSupabaseClient(config.value));
+  });
+  const [profileCache] = useState<OfflineProfileCache | null>(() => {
+    if (injectedProfileCache !== undefined) return injectedProfileCache;
+    return injectedBackend ? null : createBrowserProfileCache();
   });
   const [state, setState] = useState<AuthState>(
     backend ? { status: 'loading' } : { status: 'misconfigured', message: config.ok ? '系统尚未配置。' : config.message },
@@ -65,6 +97,7 @@ export function AuthProvider({
   const transitionEpoch = useRef(0);
   const explicitSignOutInProgress = useRef(false);
   const explicitSignOutPromise = useRef<Promise<void> | null>(null);
+  const activeUserId = useRef<string | null>(null);
 
   const registerSignOutCleanup = useCallback((cleanup: () => Promise<void>) => {
     signOutCleanups.current.add(cleanup);
@@ -90,32 +123,76 @@ export function AuthProvider({
   ) {
     if (!backend || explicitSignOutInProgress.current || !isCurrentTransition(epoch)) return;
     if (!session) {
+      const previousUserId = activeUserId.current;
+      activeUserId.current = null;
+      if (previousUserId) profileCache?.remove(previousUserId);
       await runSignOutCleanups();
       if (isCurrentTransition(epoch)) setState({ status: 'anonymous' });
       return;
     }
-    const profile = await backend.getProfile(session.user.id);
+    const userId = session.user.id;
+    const previousUserId = activeUserId.current;
+    if (previousUserId && previousUserId !== userId) {
+      activeUserId.current = null;
+      profileCache?.remove(previousUserId);
+      await runSignOutCleanups();
+      if (!isCurrentTransition(epoch)) return;
+    }
+
+    const requestStartedOnline = online();
+    let profile;
+    try {
+      profile = await backend.getProfile(userId);
+    } catch {
+      if (!isCurrentTransition(epoch)) return;
+      const cachedProfile = !online() && hasUnexpiredSession(session)
+        ? profileCache?.read(userId) ?? null
+        : null;
+      if (cachedProfile?.isActive && !cachedProfile.mustChangePassword) {
+        activeUserId.current = userId;
+        setState({ status: 'authenticated', identity: { session, profile: cachedProfile } });
+        return;
+      }
+
+      await runSignOutCleanups();
+      if (isCurrentTransition(epoch)) {
+        activeUserId.current = null;
+        setState({
+          status: 'anonymous',
+          error: online()
+            ? '登录状态验证失败，请稍后重试。'
+            : '离线登录状态无法验证，请联网后重试。',
+        });
+      }
+      return;
+    }
     if (!isCurrentTransition(epoch)) return;
-    if (!profile) {
+    if (!profile || profile.id !== userId) {
+      profileCache?.remove(userId);
       await runSignOutCleanups();
       if (!isCurrentTransition(epoch)) return;
       await backend.signOut();
       if (isCurrentTransition(epoch)) {
+        activeUserId.current = null;
         setState({ status: 'anonymous', error: '账号资料不完整，请联系管理员。' });
       }
       return;
     }
+    if (requestStartedOnline) profileCache?.write(profile);
     if (!profile.isActive) {
+      profileCache?.remove(userId);
       await runSignOutCleanups();
       if (!isCurrentTransition(epoch)) return;
       await backend.signOut();
       if (isCurrentTransition(epoch)) {
+        activeUserId.current = null;
         setState({ status: 'anonymous', error: '账号已停用，请联系管理员。' });
       }
       return;
     }
     const identity: AuthIdentity = { session, profile };
     if (isCurrentTransition(epoch)) {
+      activeUserId.current = userId;
       setState(profile.mustChangePassword
         ? { status: 'mustChange', identity }
         : { status: 'authenticated', identity });
@@ -143,7 +220,7 @@ export function AuthProvider({
       beginTransition();
       unsubscribe();
     };
-  }, [backend]);
+  }, [backend, online, profileCache]);
 
   const value: AuthContextValue = {
     state,
@@ -185,6 +262,9 @@ export function AuthProvider({
       setPending(true);
       const operation = (async () => {
         let failed = false;
+        const signingOutUserId = activeUserId.current;
+        activeUserId.current = null;
+        if (signingOutUserId) profileCache?.remove(signingOutUserId);
         try {
           await runSignOutCleanups();
         } catch {

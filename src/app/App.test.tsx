@@ -2,6 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { expect, test, vi } from 'vitest';
 import { WorkbenchDatabase } from '../db/database';
+import { createLocalRepositories } from '../db/localRepositories';
 import { createSyncedRepositories } from '../db/syncedRepositories';
 import type { AuthBackend } from '../features/auth/authTypes';
 import type { Database } from '../lib/supabase/database.types';
@@ -116,5 +117,101 @@ test('refetches an active feature query after the sync engine accepts a realtime
     view.unmount();
     window.location.hash = '';
     await database.delete();
+  }
+});
+
+test('does not expose user A cached query data after a direct identity replacement with user B', async () => {
+  window.location.hash = '#/todos';
+  const firstSession = { user: { id: 'user-1' } } as Session;
+  const secondSession = { user: { id: 'user-2' } } as Session;
+  let emitSession: ((session: Session | null) => void) | undefined;
+  const backend: AuthBackend = {
+    getSession: async () => firstSession,
+    subscribe: (callback) => {
+      emitSession = callback;
+      return () => undefined;
+    },
+    getProfile: async (userId) => ({
+      id: userId,
+      username: userId === 'user-1' ? 'first-user' : 'second-user',
+      role: 'member',
+      isActive: true,
+      mustChangePassword: false,
+    }),
+    signIn: async () => firstSession,
+    signOut: async () => undefined,
+    completePasswordChange: async () => undefined,
+  };
+  const syncDatabase = new WorkbenchDatabase(`app-identity-sync-${crypto.randomUUID()}`);
+  const firstDatabase = new WorkbenchDatabase(`app-identity-first-${crypto.randomUUID()}`);
+  const secondDatabase = new WorkbenchDatabase(`app-identity-second-${crypto.randomUUID()}`);
+  const firstRepositories = createLocalRepositories(firstDatabase);
+  const secondRepositories = createLocalRepositories(secondDatabase);
+  await firstRepositories.todos.create({
+    title: 'A 私密待办',
+    description: '',
+    role: 'personal',
+    startAt: null,
+    endAt: null,
+    remindAt: null,
+    priority: 'normal',
+    status: 'open',
+    sourceType: null,
+    sourceId: null,
+  });
+  let releaseSecondTodos: ((todos: Awaited<ReturnType<typeof secondRepositories.todos.list>>) => void) | undefined;
+  const pendingSecondTodos = new Promise<Awaited<ReturnType<typeof secondRepositories.todos.list>>>((resolve) => {
+    releaseSecondTodos = resolve;
+  });
+  secondRepositories.todos.list = () => pendingSecondTodos;
+  const dependencies: SyncProviderDependencies = {
+    client: {} as SupabaseClient<Database>,
+    database: syncDatabase,
+    createGateway: vi.fn(() => ({
+      pullAll: async () => [],
+      apply: async () => { throw new Error('unused gateway apply'); },
+      subscribe: () => ({ ready: Promise.resolve(), unsubscribe: async () => undefined }),
+    })),
+    createRepositories: vi.fn((_database, userId) => (
+      userId === 'user-1' ? firstRepositories : secondRepositories
+    )),
+    createEngine: vi.fn(() => ({
+      start: async () => true,
+      retry: async () => true,
+      stop: async () => undefined,
+    })),
+  };
+  const view = render(<App authBackend={backend} syncDependencies={dependencies} />);
+
+  try {
+    expect(await screen.findByText('A 私密待办')).toBeInTheDocument();
+
+    act(() => { emitSession?.(secondSession); });
+
+    expect(await screen.findByText('second-user')).toBeInTheDocument();
+    expect(screen.queryByText('A 私密待办')).not.toBeInTheDocument();
+
+    await act(async () => {
+      releaseSecondTodos?.([{
+        id: 'user-b-todo',
+        title: 'B 私密待办',
+        description: '',
+        role: 'personal',
+        startAt: null,
+        endAt: null,
+        remindAt: null,
+        priority: 'normal',
+        status: 'open',
+        sourceType: null,
+        sourceId: null,
+        createdAt: '2026-08-23T08:00:00.000Z',
+        updatedAt: '2026-08-23T08:00:00.000Z',
+      }]);
+    });
+    expect(await screen.findByText('B 私密待办')).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    window.location.hash = '';
+    await Promise.all([syncDatabase.delete(), firstDatabase.delete(), secondDatabase.delete()]);
   }
 });

@@ -64,7 +64,11 @@ export function App({
   return (
     <AuthProvider backend={authBackend}>
       <AuthGate>{(identity) => (
-        <AuthenticatedWorkbench identity={identity} syncDependencies={syncDependencies} />
+        <AuthenticatedWorkbench
+          identity={identity}
+          key={identity.session.user.id}
+          syncDependencies={syncDependencies}
+        />
       )}</AuthGate>
     </AuthProvider>
   );
