@@ -5,7 +5,9 @@ import { compactOperations } from './operationQueue';
 const firstTime = '2026-08-23T01:00:00.000Z';
 const secondTime = '2026-08-23T02:00:00.000Z';
 
-function operation(overrides: Partial<SyncOperation> = {}): SyncOperation {
+function operation(
+  overrides: Partial<SyncOperation> = {},
+): SyncOperation {
   return {
     id: crypto.randomUUID(),
     userId: 'user-1',
@@ -24,6 +26,7 @@ function operation(overrides: Partial<SyncOperation> = {}): SyncOperation {
     retryCount: 0,
     lastError: null,
     createdAt: firstTime,
+    localCreate: false,
     ...overrides,
   };
 }
@@ -83,6 +86,7 @@ describe('operation queue compaction', () => {
 
   test('merges an unsynced create and update into one upsert', () => {
     const created = operation({
+      localCreate: true,
       record: {
         id: 'teacher-1',
         name: '张老师',
@@ -110,16 +114,40 @@ describe('operation queue compaction', () => {
     expect(compacted).toHaveLength(1);
     expect(compacted[0]).toMatchObject({
       type: 'upsert',
+      localCreate: true,
       record: { department: '计算机学院' },
     });
   });
 
   test('cancels an unsynced create followed by a delete', () => {
     const created = operation({
+      localCreate: true,
       record: {
         id: 'teacher-1',
         name: '张老师',
         department: '',
+        archivedAt: null,
+        createdAt: '2026-08-22T23:00:00.000Z',
+        updatedAt: firstTime,
+      },
+    });
+    const deleted = operation({
+      type: 'delete',
+      record: null,
+      clientUpdatedAt: secondTime,
+      createdAt: secondTime,
+    });
+
+    expect(compactOperations([created, deleted])).toEqual([]);
+  });
+
+  test('keeps a tombstone after updating an existing record whose audit timestamps are equal', () => {
+    const existingUpsert = operation({
+      localCreate: false,
+      record: {
+        id: 'teacher-1',
+        name: '张老师',
+        department: '计算机学院',
         archivedAt: null,
         createdAt: firstTime,
         updatedAt: firstTime,
@@ -132,7 +160,7 @@ describe('operation queue compaction', () => {
       createdAt: secondTime,
     });
 
-    expect(compactOperations([created, deleted])).toEqual([]);
+    expect(compactOperations([existingUpsert, deleted])).toEqual([deleted]);
   });
 
   test('keeps a delete of an existing record as one tombstone operation', () => {

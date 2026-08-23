@@ -41,6 +41,7 @@ export interface SyncOperation {
   entityKind: EntityKind;
   entityId: string;
   type: SyncOperationType;
+  localCreate: boolean;
   record: Record<string, unknown> | null;
   clientUpdatedAt: string;
   retryCount: number;

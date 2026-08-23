@@ -35,6 +35,7 @@ function tombstone(overrides: Partial<SyncOperation> = {}): SyncOperation {
     entityKind: 'teachers',
     entityId: 'teacher-1',
     type: 'delete',
+    localCreate: false,
     record: null,
     clientUpdatedAt: updatedAt,
     retryCount: 0,
@@ -71,6 +72,7 @@ describe('synchronized repositories', () => {
         clientUpdatedAt: saved.updatedAt,
         retryCount: 0,
         lastError: null,
+        localCreate: true,
       }),
     ]);
   });
@@ -90,6 +92,7 @@ describe('synchronized repositories', () => {
         type: 'upsert',
         record: teacher({ department: '计算机学院' }),
         clientUpdatedAt: updatedAt,
+        localCreate: false,
       }),
     ]);
   });
@@ -114,6 +117,7 @@ describe('synchronized repositories', () => {
         type: 'upsert',
         record: saved,
         clientUpdatedAt: saved.updatedAt,
+        localCreate: false,
       }),
     ]);
   });
@@ -132,6 +136,7 @@ describe('synchronized repositories', () => {
         type: 'upsert',
         record: saved,
         clientUpdatedAt: saved.updatedAt,
+        localCreate: true,
       }),
     ]);
   });
@@ -153,7 +158,37 @@ describe('synchronized repositories', () => {
         record: null,
         retryCount: 0,
         lastError: null,
+        localCreate: false,
       }),
+    ]);
+  });
+
+  test('settings put over an existing mirror record is not a local create', async () => {
+    const db = createDatabase();
+    const repositories = createSyncedRepositories(db, userId);
+    await db.settings.add({ key: 'dashboard-layout', value: ['todos'], updatedAt });
+
+    await repositories.settings.put({ key: 'dashboard-layout', value: ['ideas'] });
+
+    expect(await db.syncOperations.toArray()).toEqual([
+      expect.objectContaining({
+        entityKind: 'app_settings',
+        entityId: 'dashboard-layout',
+        localCreate: false,
+      }),
+    ]);
+  });
+
+  test('settings preserve local-create provenance through later puts', async () => {
+    const db = createDatabase();
+    const repositories = createSyncedRepositories(db, userId);
+
+    await repositories.settings.put({ key: 'dashboard-layout', value: ['todos'] });
+    await repositories.settings.put({ key: 'dashboard-layout', value: ['ideas'] });
+
+    expect(await db.syncOperations.toArray()).toEqual([
+      expect.objectContaining({ localCreate: true }),
+      expect.objectContaining({ localCreate: true }),
     ]);
   });
 
@@ -180,6 +215,25 @@ describe('synchronized repositories', () => {
     expect(await repositories.teachers.list()).toEqual([teacher()]);
     expect(await repositories.teachers.get('teacher-1')).toEqual(teacher());
     expect(await db.syncOperations.count()).toBe(0);
+  });
+
+  test('preserves local-create provenance through later put and patch operations', async () => {
+    const db = createDatabase();
+    const repositories = createSyncedRepositories(db, userId);
+    const created = await repositories.teachers.create({
+      name: '张老师',
+      department: '',
+      archivedAt: null,
+    });
+
+    await repositories.teachers.put({ ...created, department: '计算机学院' });
+    await repositories.teachers.patch(created.id, { name: '李老师' });
+
+    expect(await db.syncOperations.orderBy('createdAt').toArray()).toEqual([
+      expect.objectContaining({ type: 'upsert', localCreate: true }),
+      expect.objectContaining({ type: 'upsert', localCreate: true }),
+      expect.objectContaining({ type: 'upsert', localCreate: true }),
+    ]);
   });
 });
 

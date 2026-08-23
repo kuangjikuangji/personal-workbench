@@ -9,13 +9,6 @@ function operationKey(operation: SyncOperation): string {
   return `${operation.userId}\u0000${operation.entityKind}\u0000${operation.entityId}`;
 }
 
-function isUnsyncedCreate(operation: SyncOperation): boolean {
-  if (operation.type !== 'upsert' || !operation.record) return false;
-
-  const recordCreatedAt = operation.record.createdAt ?? operation.record.created_at;
-  return recordCreatedAt === operation.clientUpdatedAt;
-}
-
 export function compactOperations(operations: SyncOperation[]): SyncOperation[] {
   const pending = new Map<string, PendingOperation>();
 
@@ -25,15 +18,18 @@ export function compactOperations(operations: SyncOperation[]): SyncOperation[] 
   for (const operation of chronological) {
     const key = operationKey(operation);
     const previous = pending.get(key);
+    const createdLocally = previous?.createdLocally ?? operation.localCreate;
 
-    if (operation.type === 'delete' && previous?.createdLocally) {
+    if (operation.type === 'delete' && createdLocally) {
       pending.delete(key);
       continue;
     }
 
     pending.set(key, {
-      operation,
-      createdLocally: previous?.createdLocally ?? isUnsyncedCreate(operation),
+      operation: operation.localCreate === createdLocally
+        ? operation
+        : { ...operation, localCreate: createdLocally },
+      createdLocally,
     });
   }
 

@@ -50,6 +50,7 @@ function createOperation(
   entityKind: EntityKind,
   entityIdValue: string,
   type: SyncOperation['type'],
+  localCreate: boolean,
   record: Record<string, unknown> | null,
   clientUpdatedAt: string,
 ): SyncOperation {
@@ -59,12 +60,28 @@ function createOperation(
     entityKind,
     entityId: entityIdValue,
     type,
+    localCreate,
     record,
     clientUpdatedAt,
     retryCount: 0,
     lastError: null,
     createdAt: new Date().toISOString(),
   };
+}
+
+async function hasQueuedLocalCreate(
+  db: WorkbenchDatabase,
+  userId: string,
+  entityKind: EntityKind,
+  entityIdValue: string,
+): Promise<boolean> {
+  const operation = await db.syncOperations
+    .where('[userId+entityKind+entityId]')
+    .equals([userId, entityKind, entityIdValue])
+    .filter(({ localCreate }) => localCreate === true)
+    .first();
+
+  return operation !== undefined;
 }
 
 class SyncedCrudRepository<T extends BaseEntity, TInput> implements CrudRepository<T, TInput> {
@@ -86,12 +103,16 @@ class SyncedCrudRepository<T extends BaseEntity, TInput> implements CrudReposito
 
   async create(input: TInput): Promise<T> {
     const record = this.createRecord(input, createAuditFields());
-    await this.writeUpsert(record, () => this.table.add(record));
+    await this.writeUpsert(record, () => this.table.add(record), true);
     return record;
   }
 
   async put(value: T): Promise<T> {
-    await this.writeUpsert(value, () => this.table.put(value));
+    await this.writeUpsert(
+      value,
+      () => this.table.put(value),
+      async () => !(await this.table.get(value.id)) || this.hasQueuedLocalCreate(value.id),
+    );
     return value;
   }
 
@@ -108,7 +129,7 @@ class SyncedCrudRepository<T extends BaseEntity, TInput> implements CrudReposito
         updatedAt: new Date().toISOString(),
       };
       await this.table.put(updated);
-      await this.enqueueUpsert(updated);
+      await this.enqueueUpsert(updated, await this.hasQueuedLocalCreate(id));
       return updated;
     });
   }
@@ -116,34 +137,46 @@ class SyncedCrudRepository<T extends BaseEntity, TInput> implements CrudReposito
   async delete(id: string): Promise<void> {
     const timestamp = new Date().toISOString();
     await this.db.transaction('rw', [this.table, this.db.syncOperations], async () => {
+      const localCreate = await this.hasQueuedLocalCreate(id);
       await this.table.delete(id);
       await this.db.syncOperations.add(createOperation(
         this.userId,
         this.entityKind,
         id,
         'delete',
+        localCreate,
         null,
         timestamp,
       ));
     });
   }
 
-  private async writeUpsert(record: T, write: () => Promise<unknown>): Promise<void> {
+  private async writeUpsert(
+    record: T,
+    write: () => Promise<unknown>,
+    localCreate: boolean | (() => Promise<boolean>),
+  ): Promise<void> {
     await this.db.transaction('rw', [this.table, this.db.syncOperations], async () => {
+      const provenance = typeof localCreate === 'boolean' ? localCreate : await localCreate();
       await write();
-      await this.enqueueUpsert(record);
+      await this.enqueueUpsert(record, provenance);
     });
   }
 
-  private async enqueueUpsert(record: T): Promise<void> {
+  private async enqueueUpsert(record: T, localCreate: boolean): Promise<void> {
     await this.db.syncOperations.add(createOperation(
       this.userId,
       this.entityKind,
       entityId(this.entityKind, record),
       'upsert',
+      localCreate,
       recordSnapshot(record),
       record.updatedAt,
     ));
+  }
+
+  private async hasQueuedLocalCreate(id: string): Promise<boolean> {
+    return hasQueuedLocalCreate(this.db, this.userId, this.entityKind, id);
   }
 }
 
@@ -169,12 +202,15 @@ function createSettingsRepository(db: WorkbenchDatabase, userId: string): Settin
         updatedAt: 'updatedAt' in input ? input.updatedAt : new Date().toISOString(),
       };
       await db.transaction('rw', [table, db.syncOperations], async () => {
+        const existing = await table.get(value.key);
+        const queuedLocalCreate = await hasQueuedLocalCreate(db, userId, 'app_settings', value.key);
         await table.put(value);
         await db.syncOperations.add(createOperation(
           userId,
           'app_settings',
           entityId('app_settings', value),
           'upsert',
+          existing === undefined || queuedLocalCreate,
           recordSnapshot(value),
           value.updatedAt,
         ));
@@ -184,12 +220,14 @@ function createSettingsRepository(db: WorkbenchDatabase, userId: string): Settin
     async delete(key) {
       const timestamp = new Date().toISOString();
       await db.transaction('rw', [table, db.syncOperations], async () => {
+        const localCreate = await hasQueuedLocalCreate(db, userId, 'app_settings', key);
         await table.delete(key);
         await db.syncOperations.add(createOperation(
           userId,
           'app_settings',
           key,
           'delete',
+          localCreate,
           null,
           timestamp,
         ));
