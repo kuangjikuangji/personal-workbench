@@ -31,7 +31,12 @@ export default defineConfig(({ command, isPreview }) => ({
   test: {
     css: true,
     environment: 'jsdom',
-    exclude: [...configDefaults.exclude, 'e2e/**'],
+    exclude: [
+      ...configDefaults.exclude,
+      'e2e/**',
+      'scripts/**',
+      'supabase/functions/**'
+    ],
     globals: true,
     setupFiles: ['./src/test/setup.ts']
   }

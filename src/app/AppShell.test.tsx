@@ -3,17 +3,40 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { vi } from 'vitest';
+import type { Profile } from '../features/auth/authTypes';
 
 const pwaState = vi.hoisted(() => ({ needRefresh: false, blockedMessage: '', later: vi.fn(), updateNow: vi.fn() }));
 vi.mock('./usePwaUpdate', () => ({ usePwaUpdate: () => pwaState }));
 
-function renderAtRoute(route = '/') {
+const profile: Profile = {
+  id: 'user-1',
+  username: 'zhoujingjing',
+  role: 'admin',
+  isActive: true,
+  mustChangePassword: false,
+};
+
+function renderAtRoute(route = '/', onSignOut = vi.fn()) {
   return render(
     <MemoryRouter initialEntries={[route]}>
-      <AppShell><h2>占位内容</h2></AppShell>
+      <AppShell profile={profile} onSignOut={onSignOut}><h2>占位内容</h2></AppShell>
     </MemoryRouter>,
   );
 }
+
+test('shows the authenticated account and provides logout on desktop and mobile', async () => {
+  const user = userEvent.setup();
+  const onSignOut = vi.fn().mockResolvedValue(undefined);
+  renderAtRoute('/', onSignOut);
+
+  expect(screen.getByText('zhoujingjing')).toBeInTheDocument();
+  expect(screen.getByText('管理员')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '退出登录' }));
+  expect(onSignOut).toHaveBeenCalledOnce();
+  await user.click(screen.getByRole('button', { name: '我的' }));
+  expect(screen.getByRole('dialog', { name: '我的' })).toHaveTextContent('zhoujingjing');
+  expect(screen.getAllByRole('button', { name: '退出登录' })).toHaveLength(2);
+});
 
 test('provides the five prescribed mobile destinations and separates management from personal drawers', async () => {
   const user = userEvent.setup();
