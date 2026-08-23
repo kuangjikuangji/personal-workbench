@@ -63,6 +63,8 @@ export function AuthProvider({
   const [pending, setPending] = useState(false);
   const signOutCleanups = useRef(new Set<() => Promise<void>>());
   const transitionEpoch = useRef(0);
+  const explicitSignOutInProgress = useRef(false);
+  const explicitSignOutPromise = useRef<Promise<void> | null>(null);
 
   const registerSignOutCleanup = useCallback((cleanup: () => Promise<void>) => {
     signOutCleanups.current.add(cleanup);
@@ -86,7 +88,7 @@ export function AuthProvider({
     session: Awaited<ReturnType<AuthBackend['getSession']>>,
     epoch: number,
   ) {
-    if (!backend || !isCurrentTransition(epoch)) return;
+    if (!backend || explicitSignOutInProgress.current || !isCurrentTransition(epoch)) return;
     if (!session) {
       await runSignOutCleanups();
       if (isCurrentTransition(epoch)) setState({ status: 'anonymous' });
@@ -132,7 +134,9 @@ export function AuthProvider({
         if (active && isCurrentTransition(restoreEpoch)) setState({ status: 'anonymous' });
       });
     const unsubscribe = backend.subscribe((session) => {
-      if (active) void applySession(session, beginTransition());
+      if (active && !explicitSignOutInProgress.current) {
+        void applySession(session, beginTransition());
+      }
     });
     return () => {
       active = false;
@@ -146,7 +150,7 @@ export function AuthProvider({
     pending,
     registerSignOutCleanup,
     async signIn(username, password) {
-      if (!backend) return;
+      if (!backend || explicitSignOutInProgress.current) return;
       const epoch = beginTransition();
       setPending(true);
       try {
@@ -160,7 +164,7 @@ export function AuthProvider({
       }
     },
     async completePasswordChange(currentPassword, newPassword) {
-      if (!backend || state.status !== 'mustChange') return;
+      if (!backend || explicitSignOutInProgress.current || state.status !== 'mustChange') return;
       const epoch = beginTransition();
       setPending(true);
       try {
@@ -172,18 +176,35 @@ export function AuthProvider({
         setPending(false);
       }
     },
-    async signOut() {
-      if (!backend) return;
-      const epoch = beginTransition();
+    signOut() {
+      if (!backend) return Promise.resolve();
+      if (explicitSignOutPromise.current) return explicitSignOutPromise.current;
+
+      beginTransition();
+      explicitSignOutInProgress.current = true;
       setPending(true);
-      try {
-        await runSignOutCleanups();
-        if (!isCurrentTransition(epoch)) return;
-        await backend.signOut();
-        if (isCurrentTransition(epoch)) setState({ status: 'anonymous' });
-      } finally {
+      const operation = (async () => {
+        let failed = false;
+        try {
+          await runSignOutCleanups();
+        } catch {
+          failed = true;
+        }
+        try {
+          await backend.signOut();
+        } catch {
+          failed = true;
+        }
+
+        setState(failed
+          ? { status: 'anonymous', error: '退出登录未完成，请检查网络后重试。' }
+          : { status: 'anonymous' });
         setPending(false);
-      }
+        explicitSignOutInProgress.current = false;
+        explicitSignOutPromise.current = null;
+      })();
+      explicitSignOutPromise.current = operation;
+      return operation;
     },
   };
 

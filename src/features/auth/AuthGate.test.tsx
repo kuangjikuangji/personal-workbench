@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Session } from '@supabase/supabase-js';
 import { AuthGate } from './AuthGate';
-import { AuthProvider } from './AuthProvider';
+import { AuthProvider, useAuth } from './AuthProvider';
 import type { AuthBackend, Profile } from './authTypes';
 import { vi } from 'vitest';
 
@@ -25,6 +25,15 @@ function backend(overrides: Partial<AuthBackend> = {}): AuthBackend {
     completePasswordChange: async () => undefined,
     ...overrides,
   };
+}
+
+function SignOutControl() {
+  const auth = useAuth();
+  return (
+    <button type="button" onClick={() => { void auth.signOut().catch(() => undefined); }}>
+      end session
+    </button>
+  );
 }
 
 test('shows only the login page for an anonymous visitor', async () => {
@@ -169,6 +178,23 @@ test('does not sign out a newer identity when an older inactive profile resolves
 
   expect(screen.getByText('已登录：newer-user')).toBeInTheDocument();
   expect(signOut).not.toHaveBeenCalled();
+});
+
+test('fails closed to anonymous UI when backend sign-out rejects', async () => {
+  render(
+    <AuthProvider backend={backend({
+      getSession: async () => session,
+      signOut: async () => { throw new Error('remote sign-out failed'); },
+    })}>
+      <AuthGate>{() => <><div>protected workbench</div><SignOutControl /></>}</AuthGate>
+    </AuthProvider>,
+  );
+
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'end session' }));
+
+  expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent('退出登录未完成');
+  expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
 });
 
 test('fails closed when Supabase configuration is absent', async () => {

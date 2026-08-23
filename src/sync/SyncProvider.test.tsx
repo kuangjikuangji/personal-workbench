@@ -408,8 +408,13 @@ test('awaits engine stop and current-user mirror cleanup before revealing anonym
     }),
   });
   const syncDependencies = dependencies(database, syncEngine);
+  let emitSession: ((nextSession: Session | null) => void) | undefined;
   const backend = authBackend({
     getSession: async () => session,
+    subscribe: (callback) => {
+      emitSession = callback;
+      return () => undefined;
+    },
     signOut: async () => {
       events.push('backend signed out');
       expect(await database.teachers.count()).toBe(0);
@@ -438,10 +443,14 @@ test('awaits engine stop and current-user mirror cleanup before revealing anonym
   expect(screen.getByText('protected workbench')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '登录' })).not.toBeInTheDocument();
   expect(await database.teachers.count()).toBe(1);
+  act(() => { emitSession?.(session); });
+  await act(async () => undefined);
+  expect(events).toEqual(['stop requested']);
 
   finishStop?.();
 
   expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument();
   expect(events).toEqual(['stop requested', 'engine stopped', 'backend signed out']);
   expect(syncEngine.stop).toHaveBeenCalledTimes(1);
+  expect(syncEngine.start).toHaveBeenCalledTimes(1);
 });
