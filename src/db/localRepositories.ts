@@ -29,7 +29,7 @@ import type {
 
 type AuditFields = Pick<BaseEntity, 'id' | 'createdAt' | 'updatedAt'>;
 
-function auditFields(): AuditFields {
+export function createAuditFields(): AuditFields {
   const timestamp = new Date().toISOString();
 
   return { id: crypto.randomUUID(), createdAt: timestamp, updatedAt: timestamp };
@@ -50,7 +50,7 @@ class LocalCrudRepository<T extends BaseEntity, TInput> implements CrudRepositor
   }
 
   async create(input: TInput): Promise<T> {
-    const record = this.createRecord(input, auditFields());
+    const record = this.createRecord(input, createAuditFields());
     await this.table.add(record);
 
     return record;
