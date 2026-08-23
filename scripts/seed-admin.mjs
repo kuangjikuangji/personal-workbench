@@ -87,7 +87,10 @@ export async function seedInitialAdmin(client, initialPassword) {
       if (created) {
         await client.auth.admin.deleteUser(user.id);
       }
-      throw new Error("无法初始化管理员账号资料");
+      const safeCode = typeof profileError.code === "string"
+        ? profileError.code
+        : "unknown";
+      throw new Error(`无法初始化管理员账号资料（${safeCode}）`);
     }
   }
 
