@@ -1,5 +1,13 @@
-import { createContext, type PropsWithChildren, useContext, useEffect, useState } from 'react';
-import { createWorkbenchSupabaseClient } from '../../lib/supabase/client';
+import {
+  createContext,
+  type PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { getWorkbenchSupabaseClient } from '../../lib/supabase/client';
 import { readSupabaseConfig } from '../../lib/supabase/config';
 import type { SupabaseConfig } from '../../lib/supabase/config';
 import { createAuthBackend } from './authService';
@@ -15,13 +23,11 @@ interface AuthContextValue {
   signIn(username: string, password: string): Promise<void>;
   completePasswordChange(currentPassword: string, newPassword: string): Promise<void>;
   signOut(): Promise<void>;
+  registerSignOutCleanup(cleanup: () => Promise<void>): () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 const defaultConfig = readSupabaseConfig(import.meta.env);
-const defaultBackend = defaultConfig.ok
-  ? createAuthBackend(createWorkbenchSupabaseClient(defaultConfig.value))
-  : null;
 
 function anonymousError(error: unknown): string {
   if (error instanceof Error && error.message === 'account_inactive') {
@@ -49,26 +55,38 @@ export function AuthProvider({
   const [backend] = useState(() => {
     if (injectedBackend) return injectedBackend;
     if (!config.ok) return null;
-    if (config === defaultConfig) return defaultBackend;
-    return createAuthBackend(createWorkbenchSupabaseClient(config.value));
+    return createAuthBackend(getWorkbenchSupabaseClient(config.value));
   });
   const [state, setState] = useState<AuthState>(
     backend ? { status: 'loading' } : { status: 'misconfigured', message: config.ok ? '系统尚未配置。' : config.message },
   );
   const [pending, setPending] = useState(false);
+  const signOutCleanups = useRef(new Set<() => Promise<void>>());
+
+  const registerSignOutCleanup = useCallback((cleanup: () => Promise<void>) => {
+    signOutCleanups.current.add(cleanup);
+    return () => { signOutCleanups.current.delete(cleanup); };
+  }, []);
+
+  async function runSignOutCleanups(): Promise<void> {
+    await Promise.all([...signOutCleanups.current].map((cleanup) => cleanup()));
+  }
 
   async function applySession(session: Awaited<ReturnType<AuthBackend['getSession']>>) {
     if (!backend || !session) {
+      await runSignOutCleanups();
       setState({ status: 'anonymous' });
       return;
     }
     const profile = await backend.getProfile(session.user.id);
     if (!profile) {
+      await runSignOutCleanups();
       await backend.signOut();
       setState({ status: 'anonymous', error: '账号资料不完整，请联系管理员。' });
       return;
     }
     if (!profile.isActive) {
+      await runSignOutCleanups();
       await backend.signOut();
       setState({ status: 'anonymous', error: '账号已停用，请联系管理员。' });
       return;
@@ -101,6 +119,7 @@ export function AuthProvider({
   const value: AuthContextValue = {
     state,
     pending,
+    registerSignOutCleanup,
     async signIn(username, password) {
       if (!backend) return;
       setPending(true);
@@ -126,8 +145,14 @@ export function AuthProvider({
     },
     async signOut() {
       if (!backend) return;
-      await backend.signOut();
-      setState({ status: 'anonymous' });
+      setPending(true);
+      try {
+        await runSignOutCleanups();
+        await backend.signOut();
+        setState({ status: 'anonymous' });
+      } finally {
+        setPending(false);
+      }
     },
   };
 
