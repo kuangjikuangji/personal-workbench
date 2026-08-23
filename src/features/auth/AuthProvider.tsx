@@ -21,6 +21,12 @@ type ConfigResult =
   | { ok: true; value: SupabaseConfig }
   | { ok: false; message: string };
 
+interface UserTransitionBarrier {
+  sourceUserId: string;
+  targetUserId: string | null;
+  cleanupSucceeded: Promise<boolean>;
+}
+
 interface AuthContextValue {
   state: AuthState;
   pending: boolean;
@@ -98,6 +104,7 @@ export function AuthProvider({
   const explicitSignOutInProgress = useRef(false);
   const explicitSignOutPromise = useRef<Promise<void> | null>(null);
   const activeUserId = useRef<string | null>(null);
+  const userTransitionBarrier = useRef<UserTransitionBarrier | null>(null);
 
   const registerSignOutCleanup = useCallback((cleanup: () => Promise<void>) => {
     signOutCleanups.current.add(cleanup);
@@ -117,27 +124,118 @@ export function AuthProvider({
     return transitionEpoch.current === epoch;
   }
 
+  async function failClosed(
+    message: string,
+    userIds: Array<string | null>,
+    cleanupAlreadyAttempted = false,
+  ): Promise<void> {
+    beginTransition();
+    explicitSignOutInProgress.current = true;
+    const activeId = activeUserId.current;
+    const transition = userTransitionBarrier.current;
+    activeUserId.current = null;
+    userTransitionBarrier.current = null;
+    for (const userId of new Set([...userIds, activeId, transition?.sourceUserId ?? null])) {
+      if (userId) profileCache?.remove(userId);
+    }
+    setState({ status: 'anonymous', error: message });
+
+    if (!cleanupAlreadyAttempted) {
+      try {
+        await runSignOutCleanups();
+      } catch {
+        // Authentication still fails closed when local mirror cleanup is unavailable.
+      }
+    }
+    try {
+      await backend?.signOut();
+    } catch {
+      // The local anonymous state remains authoritative after remote sign-out failure.
+    } finally {
+      setState({ status: 'anonymous', error: message });
+      explicitSignOutInProgress.current = false;
+    }
+  }
+
+  function startOrJoinUserTransition(targetUserId: string | null): UserTransitionBarrier | null {
+    const sourceUserId = activeUserId.current;
+    if (!sourceUserId || sourceUserId === targetUserId) return null;
+
+    const existingBarrier = userTransitionBarrier.current;
+    if (existingBarrier?.sourceUserId === sourceUserId) {
+      existingBarrier.targetUserId = targetUserId;
+      return existingBarrier;
+    }
+
+    profileCache?.remove(sourceUserId);
+    const barrier: UserTransitionBarrier = {
+      sourceUserId,
+      targetUserId,
+      cleanupSucceeded: (async () => {
+        try {
+          await runSignOutCleanups();
+          return true;
+        } catch {
+          return false;
+        }
+      })(),
+    };
+    userTransitionBarrier.current = barrier;
+    return barrier;
+  }
+
+  async function awaitUserTransition(
+    targetUserId: string | null,
+    epoch: number,
+  ): Promise<UserTransitionBarrier | null | false> {
+    const barrier = startOrJoinUserTransition(targetUserId);
+    if (!barrier) return null;
+
+    const cleanupSucceeded = await barrier.cleanupSucceeded;
+    if (
+      !isCurrentTransition(epoch)
+      || explicitSignOutInProgress.current
+      || barrier.targetUserId !== targetUserId
+    ) return false;
+    if (!cleanupSucceeded) {
+      await failClosed(
+        '切换账号前本地数据清理失败，已退出登录。',
+        [barrier.sourceUserId, targetUserId],
+        true,
+      );
+      return false;
+    }
+    return barrier;
+  }
+
   async function applySession(
     session: Awaited<ReturnType<AuthBackend['getSession']>>,
     epoch: number,
   ) {
     if (!backend || explicitSignOutInProgress.current || !isCurrentTransition(epoch)) return;
     if (!session) {
+      const barrier = await awaitUserTransition(null, epoch);
+      if (barrier === false || !isCurrentTransition(epoch)) return;
       const previousUserId = activeUserId.current;
       activeUserId.current = null;
+      if (barrier && userTransitionBarrier.current === barrier) userTransitionBarrier.current = null;
       if (previousUserId) profileCache?.remove(previousUserId);
-      await runSignOutCleanups();
+      if (!barrier) {
+        try {
+          await runSignOutCleanups();
+        } catch {
+          if (isCurrentTransition(epoch)) {
+            setState({ status: 'anonymous', error: '本地数据清理失败，请刷新后重试。' });
+          }
+          return;
+        }
+      }
       if (isCurrentTransition(epoch)) setState({ status: 'anonymous' });
       return;
     }
     const userId = session.user.id;
-    const previousUserId = activeUserId.current;
-    if (previousUserId && previousUserId !== userId) {
-      activeUserId.current = null;
-      profileCache?.remove(previousUserId);
-      await runSignOutCleanups();
-      if (!isCurrentTransition(epoch)) return;
-    }
+    const barrier = await awaitUserTransition(userId, epoch);
+    if (barrier === false || !isCurrentTransition(epoch)) return;
 
     const requestStartedOnline = online();
     let profile;
@@ -150,49 +248,42 @@ export function AuthProvider({
         : null;
       if (cachedProfile?.isActive && !cachedProfile.mustChangePassword) {
         activeUserId.current = userId;
+        if (barrier && userTransitionBarrier.current === barrier) userTransitionBarrier.current = null;
         setState({ status: 'authenticated', identity: { session, profile: cachedProfile } });
         return;
       }
 
-      await runSignOutCleanups();
-      if (isCurrentTransition(epoch)) {
-        activeUserId.current = null;
-        setState({
-          status: 'anonymous',
-          error: online()
-            ? '登录状态验证失败，请稍后重试。'
-            : '离线登录状态无法验证，请联网后重试。',
-        });
-      }
+      await failClosed(
+        online()
+          ? '登录状态验证失败，请稍后重试。'
+          : '离线登录状态无法验证，请联网后重试。',
+        [userId],
+        barrier !== null,
+      );
       return;
     }
     if (!isCurrentTransition(epoch)) return;
     if (!profile || profile.id !== userId) {
-      profileCache?.remove(userId);
-      await runSignOutCleanups();
-      if (!isCurrentTransition(epoch)) return;
-      await backend.signOut();
-      if (isCurrentTransition(epoch)) {
-        activeUserId.current = null;
-        setState({ status: 'anonymous', error: '账号资料不完整，请联系管理员。' });
-      }
+      await failClosed(
+        '账号资料不完整，请联系管理员。',
+        [userId],
+        barrier !== null,
+      );
       return;
     }
     if (requestStartedOnline) profileCache?.write(profile);
     if (!profile.isActive) {
-      profileCache?.remove(userId);
-      await runSignOutCleanups();
-      if (!isCurrentTransition(epoch)) return;
-      await backend.signOut();
-      if (isCurrentTransition(epoch)) {
-        activeUserId.current = null;
-        setState({ status: 'anonymous', error: '账号已停用，请联系管理员。' });
-      }
+      await failClosed(
+        '账号已停用，请联系管理员。',
+        [userId],
+        barrier !== null,
+      );
       return;
     }
     const identity: AuthIdentity = { session, profile };
     if (isCurrentTransition(epoch)) {
       activeUserId.current = userId;
+      if (barrier && userTransitionBarrier.current === barrier) userTransitionBarrier.current = null;
       setState(profile.mustChangePassword
         ? { status: 'mustChange', identity }
         : { status: 'authenticated', identity });
@@ -212,6 +303,8 @@ export function AuthProvider({
       });
     const unsubscribe = backend.subscribe((session) => {
       if (active && !explicitSignOutInProgress.current) {
+        const barrier = userTransitionBarrier.current;
+        if (session && barrier && session.user.id === barrier.sourceUserId) return;
         void applySession(session, beginTransition());
       }
     });
@@ -263,10 +356,15 @@ export function AuthProvider({
       const operation = (async () => {
         let failed = false;
         const signingOutUserId = activeUserId.current;
+        const transition = userTransitionBarrier.current;
         activeUserId.current = null;
+        userTransitionBarrier.current = null;
         if (signingOutUserId) profileCache?.remove(signingOutUserId);
         try {
-          await runSignOutCleanups();
+          const cleanupSucceeded = transition?.sourceUserId === signingOutUserId
+            ? await transition.cleanupSucceeded
+            : await runSignOutCleanups().then(() => true, () => false);
+          if (!cleanupSucceeded) failed = true;
         } catch {
           failed = true;
         }

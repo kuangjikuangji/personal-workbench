@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Session } from '@supabase/supabase-js';
+import { useEffect } from 'react';
 import { AuthGate } from './AuthGate';
 import { AuthProvider, useAuth } from './AuthProvider';
 import { createOfflineProfileCache, type OfflineProfileCache } from './authService';
@@ -48,6 +49,15 @@ function SignOutControl() {
       end session
     </button>
   );
+}
+
+function CleanupRegistration({ cleanup }: { cleanup: () => Promise<void> }) {
+  const auth = useAuth();
+  useEffect(
+    () => auth.registerSignOutCleanup(cleanup),
+    [auth.registerSignOutCleanup, cleanup],
+  );
+  return null;
 }
 
 afterEach(() => {
@@ -176,6 +186,51 @@ test('does not use the cached profile when the profile request fails while onlin
 
   expect(await screen.findByRole('alert')).toHaveTextContent('登录状态验证失败');
   expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
+});
+
+test('fails closed without an unhandled rejection when profile validation and local cleanup both reject', async () => {
+  const cache = profileCache();
+  const restoredSession = persistentSession();
+  let emitSession: ((nextSession: Session | null) => void) | undefined;
+  let profileRequests = 0;
+  const cleanup = vi.fn(async () => { throw new Error('indexeddb cleanup failed'); });
+  const signOut = vi.fn(async () => undefined);
+  render(
+    <AuthProvider
+      backend={backend({
+        getSession: async () => restoredSession,
+        subscribe: (callback) => {
+          emitSession = callback;
+          return () => undefined;
+        },
+        getProfile: async () => {
+          profileRequests += 1;
+          if (profileRequests === 1) return activeProfile;
+          throw new Error('profile validation unavailable');
+        },
+        signOut,
+      })}
+      online={() => true}
+      profileCache={cache}
+    >
+      <AuthGate>{() => (
+        <>
+          <div>protected workbench</div>
+          <CleanupRegistration cleanup={cleanup} />
+        </>
+      )}</AuthGate>
+    </AuthProvider>,
+  );
+  expect(await screen.findByText('protected workbench')).toBeInTheDocument();
+  expect(cache.read('user-1')).toEqual(activeProfile);
+
+  act(() => { emitSession?.(restoredSession); });
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('登录状态验证失败');
+  expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  expect(signOut).toHaveBeenCalledTimes(1);
+  expect(cache.read('user-1')).toBeNull();
 });
 
 test.each([

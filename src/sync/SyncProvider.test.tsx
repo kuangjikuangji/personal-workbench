@@ -4,7 +4,7 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { afterEach, expect, test, vi } from 'vitest';
 import { App } from '../app/App';
 import { WorkbenchDatabase } from '../db/database';
-import { createSyncedRepositories } from '../db/syncedRepositories';
+import { clearUserMirror, createSyncedRepositories } from '../db/syncedRepositories';
 import { AuthGate } from '../features/auth/AuthGate';
 import { AuthProvider, useAuth } from '../features/auth/AuthProvider';
 import type { AuthBackend, AuthIdentity, Profile } from '../features/auth/authTypes';
@@ -363,6 +363,87 @@ test('fails closed when engine ownership setup rejects and retries with a new en
   expect(await screen.findByText('cleared-owner content')).toBeInTheDocument();
   expect(firstEngine.stop).toHaveBeenCalledTimes(1);
   expect(secondEngine.start).toHaveBeenCalledTimes(1);
+});
+
+test('shares one A-to-B cleanup barrier across repeated B session events before starting B sync', async () => {
+  const database = createDatabase();
+  const secondUserId = 'user-2';
+  const secondSession = { user: { id: secondUserId } } as Session;
+  const secondProfile: Profile = {
+    ...profile,
+    id: secondUserId,
+    username: 'second-user',
+  };
+  const events: string[] = [];
+  let emitSession: ((nextSession: Session | null) => void) | undefined;
+  let finishCleanup: (() => void) | undefined;
+  const cleanupBarrier = new Promise<void>((resolve) => { finishCleanup = resolve; });
+  const firstEngine = engine({
+    stop: vi.fn(async () => { events.push('A engine stopped'); }),
+  });
+  const secondEngine = engine({
+    start: vi.fn(async () => {
+      await database.teachers.put({
+        id: 'user-b-marker',
+        name: 'B 用户数据',
+        department: '',
+        archivedAt: null,
+        createdAt: '2026-08-23T00:00:00.000Z',
+        updatedAt: '2026-08-23T00:00:00.000Z',
+      });
+      events.push('B sync started');
+      return true;
+    }),
+  });
+  const clearMirror = vi.fn(async (db: WorkbenchDatabase, owner: string) => {
+    events.push('A cleanup started');
+    await cleanupBarrier;
+    await clearUserMirror(db, owner);
+    events.push('A cleanup finished');
+  });
+  const createEngine = vi.fn((options: Parameters<NonNullable<SyncProviderDependencies['createEngine']>>[0]) => (
+    options.userId === userId ? firstEngine : secondEngine
+  ));
+  const syncDependencies = dependencies(database, firstEngine, { clearMirror, createEngine });
+  const backend = authBackend({
+    getSession: async () => session,
+    subscribe: (callback) => {
+      emitSession = callback;
+      return () => undefined;
+    },
+    getProfile: async (requestedUserId) => requestedUserId === userId ? profile : secondProfile,
+  });
+
+  render(<App authBackend={backend} syncDependencies={syncDependencies} />);
+  expect(await screen.findByLabelText('当前账号')).toHaveTextContent('zhoujingjing');
+
+  act(() => {
+    emitSession?.(secondSession);
+    emitSession?.(secondSession);
+    emitSession?.(session);
+  });
+
+  await waitFor(() => expect(clearMirror).toHaveBeenCalledTimes(1));
+  expect(clearMirror).toHaveBeenCalledWith(database, userId);
+  expect(secondEngine.start).not.toHaveBeenCalled();
+  expect(createEngine).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText('当前账号')).toHaveTextContent('zhoujingjing');
+
+  await act(async () => {
+    finishCleanup?.();
+    await cleanupBarrier;
+  });
+
+  await waitFor(() => expect(screen.getByLabelText('当前账号')).toHaveTextContent('second-user'));
+  await waitFor(() => expect(secondEngine.start).toHaveBeenCalledTimes(1));
+  expect(clearMirror).toHaveBeenCalledTimes(1);
+  expect(events).toEqual([
+    'A engine stopped',
+    'A cleanup started',
+    'A cleanup finished',
+    'B sync started',
+  ]);
+  expect(await database.teachers.get('user-b-marker')).toMatchObject({ name: 'B 用户数据' });
 });
 
 test('awaits engine stop and current-user mirror cleanup before revealing anonymous UI', async () => {

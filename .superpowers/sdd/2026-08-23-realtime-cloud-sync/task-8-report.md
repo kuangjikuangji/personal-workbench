@@ -154,3 +154,68 @@ TDD evidence:
 - Full Vitest: 47 files and 288 tests passed.
 - `npm run build` exited 0 with only the known Vite large-chunk advisory.
 - No remote account, Supabase, GitHub, or Pages state was changed.
+
+## Fix round 2: fail-closed cleanup and shared account-transition barrier
+
+Two additional P1 races were reproduced and fixed locally.
+
+### Cleanup rejection cannot preserve authenticated UI
+
+- Centralized unsafe profile outcomes in a fail-closed path that immediately
+  invalidates older transition epochs, clears the relevant user-scoped profile
+  caches, and commits anonymous error state before best-effort cleanup and
+  backend sign-out.
+- Registered cleanup rejection and backend sign-out rejection are both caught,
+  so a `void applySession(...)` caller cannot surface an unhandled promise or
+  leave the previous authenticated subtree mounted.
+- Missing, mismatched, inactive, and rejected profiles use the same guarded
+  path. A safe same-user offline cached profile remains the only rejection
+  fallback.
+
+TDD evidence:
+
+- RED: the focused AuthProvider test could not find the anonymous alert, still
+  found `protected workbench`, and Vitest reported the simulated
+  `indexeddb cleanup failed` rejection as an unhandled error from
+  `runSignOutCleanups`.
+- GREEN: the same test reaches the anonymous validation error, removes the
+  protected subtree and cached profile, calls cleanup once, attempts backend
+  sign-out once, and produces no unhandled-error section.
+
+### Repeated target-session events share one cleanup barrier
+
+- Replaced the temporary `activeUserId = null` marker with a shared transition
+  object containing source user, current target user, and one caught cleanup
+  promise. Repeated B session events await that same A cleanup result.
+- A remains the active identity until the barrier succeeds and a current B
+  profile continuation is accepted. B cannot mount its QueryClient or
+  SyncProvider before then.
+- Late source-A events are ignored while the A-to-B barrier is active. Explicit
+  sign-out retains its event block, invalidates pending continuations, and joins
+  an already-running barrier rather than starting another cleanup.
+- Barrier cleanup failure resolves to a fail-closed anonymous state; it cannot
+  authenticate the target user.
+
+TDD and mutation evidence:
+
+- RED: with two B events, the pre-fix implementation replaced A with B's
+  loading subtree before the delayed A cleanup resolved, because the second B
+  event observed a null active-user marker and bypassed cleanup.
+- GREEN: the integration test observes exactly one A mirror cleanup and no B
+  engine construction before release; afterward the event order is A engine
+  stop, A cleanup start, A cleanup finish, then B sync start. B starts once and
+  its database marker remains present.
+- The test also sends a late A event. Removing the source-event guard made the
+  test fail with A still rendered after the barrier; restoring the guard made
+  it pass. Existing explicit-sign-out/session-race coverage remains green.
+
+### Fix-round 2 verification
+
+- Focused auth/App/Sync command: 5 files and 67 tests passed.
+- `npx playwright test e2e/realtime-sync.spec.ts --project=chromium-desktop`
+  exited 0 with the expected one credential-absent skip; no remote test account
+  was accessed.
+- `npm run typecheck` exited 0.
+- Full Vitest: 47 files and 290 tests passed.
+- `npm run build` exited 0 with only the known Vite large-chunk advisory.
+- No remote account, Supabase, GitHub, or Pages state was changed.
