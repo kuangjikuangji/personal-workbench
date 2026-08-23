@@ -97,10 +97,15 @@ function createGateway(options: {
   pullAll?: () => Promise<CloudChange[]>;
   apply?: (operation: SyncOperation) => Promise<CloudApplyResult>;
   events?: string[];
+  readiness?: 'immediate' | 'manual';
 } = {}): GatewayControls {
   let onChange: ((change: CloudChange) => void) | undefined;
   let onStatus: ((status: string) => void) | undefined;
   let unsubscribeCount = 0;
+  let markReady: (() => void) | undefined;
+  const ready = options.readiness === 'manual'
+    ? new Promise<void>((resolve) => { markReady = resolve; })
+    : Promise.resolve();
 
   return {
     gateway: {
@@ -115,7 +120,8 @@ function createGateway(options: {
         options.events?.push('subscribe');
         onChange = changeHandler;
         onStatus = statusHandler;
-        return async () => { unsubscribeCount += 1; };
+        const unsubscribe = async () => { unsubscribeCount += 1; };
+        return { ready, unsubscribe };
       },
     },
     emit(change) {
@@ -125,6 +131,7 @@ function createGateway(options: {
     status(status) {
       if (!onStatus) throw new Error('Gateway has not been subscribed');
       onStatus(status);
+      if (status === 'SUBSCRIBED') markReady?.();
     },
     unsubscribed: () => unsubscribeCount,
   };
@@ -138,6 +145,14 @@ async function settleIndexedDb(): Promise<void> {
   for (let turn = 0; turn < 5; turn += 1) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
+}
+
+async function waitForAsyncCondition(condition: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 50; turn += 1) {
+    if (condition()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  expect(condition()).toBe(true);
 }
 
 beforeEach(() => {
@@ -158,10 +173,14 @@ describe('sync engine startup and remote merge', () => {
     const events: string[] = [];
     let releasePull: ((changes: CloudChange[]) => void) | undefined;
     const pull = new Promise<CloudChange[]>((resolve) => { releasePull = resolve; });
-    const controls = createGateway({ events, pullAll: () => pull });
+    const controls = createGateway({ events, pullAll: () => pull, readiness: 'manual' });
     const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
 
     const starting = engine.start();
+    await vi.waitFor(() => expect(events[0]).toBe('subscribe'));
+    if (events.includes('pull')) releasePull?.([]);
+    expect(events).toEqual(['subscribe']);
+    controls.status('SUBSCRIBED');
     await vi.waitFor(() => expect(events).toEqual(['subscribe', 'pull']));
 
     controls.emit(teacherChange({
@@ -179,6 +198,100 @@ describe('sync engine startup and remote merge', () => {
 
     expect(await db.teachers.get('teacher-1')).toEqual(teacher(thirdTime, '实时老师'));
     await engine.stop();
+  });
+
+  test('waits through an initial channel error and performs catch-up only after readiness', async () => {
+    const db = createDatabase();
+    let pulls = 0;
+    const events: string[] = [];
+    const controls = createGateway({
+      events,
+      readiness: 'manual',
+      pullAll: async () => { pulls += 1; return []; },
+    });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    const starting = engine.start();
+    await vi.waitFor(() => expect(events).toEqual(['subscribe']));
+    controls.status('CHANNEL_ERROR');
+    await Promise.resolve();
+    expect(pulls).toBe(0);
+    controls.status('SUBSCRIBED');
+    await starting;
+
+    expect(pulls).toBe(1);
+    await engine.stop();
+  });
+
+  test('returns the same initialization promise to concurrent start callers', async () => {
+    const db = createDatabase();
+    let releaseOwnerLookup: (() => void) | undefined;
+    const ownerLookup = new Promise<void>((resolve) => { releaseOwnerLookup = resolve; });
+    vi.spyOn(db.syncMetadata, 'get').mockImplementationOnce((async () => {
+      await ownerLookup;
+      return undefined;
+    }) as never);
+    const events: string[] = [];
+    const controls = createGateway({ events });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    const firstStart = engine.start();
+    const secondStart = engine.start();
+    const sharedPromise = firstStart === secondStart;
+    releaseOwnerLookup?.();
+    await Promise.all([firstStart, secondStart]);
+
+    expect(sharedPromise).toBe(true);
+    expect(events).toEqual(['subscribe', 'pull']);
+    await engine.stop();
+  });
+
+  test('stop waits for owner initialization and prevents a late mirror reset', async () => {
+    const db = createDatabase();
+    await db.teachers.add(teacher());
+    let releaseOwnerLookup: (() => void) | undefined;
+    const ownerLookup = new Promise<void>((resolve) => { releaseOwnerLookup = resolve; });
+    vi.spyOn(db.syncMetadata, 'get').mockImplementationOnce((async () => {
+      await ownerLookup;
+      return { key: 'mirrorOwner', value: 'old-user', updatedAt: firstTime };
+    }) as never);
+    const events: string[] = [];
+    const controls = createGateway({ events });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    const starting = engine.start();
+    await vi.waitFor(() => expect(db.syncMetadata.get).toHaveBeenCalled());
+    let stopSettled = false;
+    const stopping = engine.stop().then(() => { stopSettled = true; });
+    await Promise.resolve();
+    const settledBeforeOwnerLookup = stopSettled;
+    releaseOwnerLookup?.();
+    await Promise.all([starting, stopping]);
+
+    expect(settledBeforeOwnerLookup).toBe(false);
+    expect(await db.teachers.get('teacher-1')).toEqual(teacher());
+    expect(events).toEqual([]);
+  });
+
+  test('stop cancels an unresolved readiness wait and awaits the shared startup promise', async () => {
+    const db = createDatabase();
+    const events: string[] = [];
+    const controls = createGateway({ events, readiness: 'manual' });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    const starting = engine.start();
+    await vi.waitFor(() => expect(events).toEqual(['subscribe']));
+    let startSettled = false;
+    void starting.then(() => { startSettled = true; });
+    await engine.stop();
+    await Promise.resolve();
+    const settledWithoutReadiness = startSettled;
+    controls.status('SUBSCRIBED');
+    await starting;
+
+    expect(settledWithoutReadiness).toBe(true);
+    expect(events).toEqual(['subscribe']);
+    expect(controls.unsubscribed()).toBe(1);
   });
 
   test('merges pulled records into their registered Dexie tables using setting keys as identity', async () => {
@@ -301,6 +414,50 @@ describe('queue acknowledgement', () => {
     await engine.stop();
   });
 
+  test('re-queries until empty when one queued operation is atomically replaced by another', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.teachers.put(teacher(thirdTime, '替换后的本地教师'));
+    await db.syncOperations.add(operation({ id: 'first-operation', createdAt: firstTime }));
+    const appliedIds: string[] = [];
+    let releaseFirstApply: ((result: CloudApplyResult) => void) | undefined;
+    const firstApply = new Promise<CloudApplyResult>((resolve) => { releaseFirstApply = resolve; });
+    const controls = createGateway({
+      apply: async (pending) => {
+        appliedIds.push(pending.id);
+        if (pending.id === 'first-operation') return firstApply;
+        return {
+          applied: true,
+          change: teacherChange({
+            value: teacher(thirdTime, '替换后的本地教师'),
+            clientUpdatedAt: thirdTime,
+            serverUpdatedAt: thirdTime,
+          }),
+        };
+      },
+    });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    const starting = engine.start();
+    await vi.waitFor(() => expect(appliedIds).toEqual(['first-operation']));
+    await db.transaction('rw', db.syncOperations, async () => {
+      await db.syncOperations.delete('first-operation');
+      await db.syncOperations.add(operation({
+        id: 'replacement-operation',
+        record: teacher(thirdTime, '替换后的本地教师'),
+        clientUpdatedAt: thirdTime,
+        createdAt: thirdTime,
+      }));
+    });
+    releaseFirstApply?.({ applied: true, change: teacherChange() });
+    await starting;
+
+    expect(appliedIds).toEqual(['first-operation', 'replacement-operation']);
+    expect(await db.syncOperations.count()).toBe(0);
+    expect(syncStore.getState().status).toBe('synced');
+    await engine.stop();
+  });
+
   test('merges the authoritative server change even when the submitted operation was stale', async () => {
     const db = createDatabase();
     await markCurrentOwner(db);
@@ -322,6 +479,69 @@ describe('queue acknowledgement', () => {
 
     expect(await db.teachers.get('teacher-1')).toEqual(teacher(thirdTime, '服务器权威值'));
     expect(await db.syncOperations.count()).toBe(0);
+    await engine.stop();
+  });
+
+  test('excludes the acknowledged delete so an equal-timestamp authoritative live row is restored', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.syncOperations.add(operation({
+      id: 'equal-delete',
+      type: 'delete',
+      record: null,
+      clientUpdatedAt: secondTime,
+    }));
+    const controls = createGateway({
+      apply: async () => ({
+        applied: false,
+        change: teacherChange({
+          value: teacher(secondTime, '服务器保留的教师'),
+          clientUpdatedAt: secondTime,
+          serverUpdatedAt: thirdTime,
+        }),
+      }),
+    });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    await engine.start();
+
+    expect(await db.teachers.get('teacher-1')).toEqual(teacher(secondTime, '服务器保留的教师'));
+    expect(await db.syncOperations.count()).toBe(0);
+    await engine.stop();
+  });
+
+  test('keeps a distinct newer queued operation ahead of an older acknowledgement for the same entity', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.teachers.put(teacher(thirdTime, '更新的本地教师'));
+    await db.syncOperations.bulkAdd([
+      operation({ id: 'acknowledged-delete', type: 'delete', record: null, createdAt: firstTime }),
+      operation({
+        id: 'newer-upsert',
+        record: teacher(thirdTime, '更新的本地教师'),
+        clientUpdatedAt: thirdTime,
+        createdAt: thirdTime,
+      }),
+    ]);
+    const controls = createGateway({
+      apply: async (pending) => {
+        if (pending.id === 'newer-upsert') throw new Error('leave newer operation queued');
+        return {
+          applied: false,
+          change: teacherChange({
+            value: teacher(secondTime, '较早的服务器教师'),
+            clientUpdatedAt: secondTime,
+            serverUpdatedAt: thirdTime,
+          }),
+        };
+      },
+    });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    await engine.start();
+
+    expect(await db.teachers.get('teacher-1')).toEqual(teacher(thirdTime, '更新的本地教师'));
+    expect((await db.syncOperations.toArray()).map(({ id }) => id)).toEqual(['newer-upsert']);
     await engine.stop();
   });
 
@@ -438,13 +658,13 @@ describe('retry triggers and lifecycle', () => {
       await vi.advanceTimersByTimeAsync(delay - 1);
       expect(attempts).toBe(expectedAttempts - 1);
       await vi.advanceTimersByTimeAsync(1);
-      await settleIndexedDb();
+      await waitForAsyncCondition(() => attempts === expectedAttempts && vi.getTimerCount() === 1);
       expect(attempts).toBe(expectedAttempts);
     }
     await vi.advanceTimersByTimeAsync(15_999);
     expect(attempts).toBe(5);
     await vi.advanceTimersByTimeAsync(1);
-    await settleIndexedDb();
+    await waitForAsyncCondition(() => attempts === 6 && vi.getTimerCount() === 1);
     expect(attempts).toBe(6);
 
     await engine.stop();
@@ -465,5 +685,125 @@ describe('retry triggers and lifecycle', () => {
 
     expect(controls.unsubscribed()).toBe(1);
     expect(await db.teachers.count()).toBe(0);
+  });
+
+  test('keeps the queued error state when a realtime event is merged after a failed flush', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.syncOperations.add(operation({ id: 'failed-operation' }));
+    const controls = createGateway({ apply: async () => { throw new Error('connection lost'); } });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+    await engine.start();
+
+    controls.emit(teacherChange({
+      value: teacher(thirdTime, '实时权威教师'),
+      clientUpdatedAt: thirdTime,
+      serverUpdatedAt: thirdTime,
+    }));
+    await waitForValue(() => db.teachers.get('teacher-1'), teacher(thirdTime, '实时权威教师'));
+    await settleIndexedDb();
+
+    expect(syncStore.getState()).toEqual({
+      status: 'error',
+      pendingCount: 1,
+      message: 'connection lost',
+    });
+    await engine.stop();
+  });
+
+  test('keeps offline state and pending count when a realtime event is merged offline', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.syncOperations.add(operation({ id: 'offline-pending' }));
+    const controls = createGateway();
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => false });
+    await engine.start();
+
+    controls.emit(teacherChange({
+      value: teacher(thirdTime, '离线收到的教师'),
+      clientUpdatedAt: thirdTime,
+      serverUpdatedAt: thirdTime,
+    }));
+    await waitForValue(() => db.teachers.get('teacher-1'), teacher(thirdTime, '离线收到的教师'));
+    await settleIndexedDb();
+
+    expect(syncStore.getState()).toEqual({ status: 'offline', pendingCount: 1, message: null });
+    await engine.stop();
+  });
+
+  test('stop prevents a delayed state count and realtime merge from committing late work', async () => {
+    const db = createDatabase();
+    const controls = createGateway();
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+    await engine.start();
+    const stateAtStop = syncStore.getState();
+    const originalWhere = db.syncOperations.where.bind(db.syncOperations);
+    let releaseCount: (() => void) | undefined;
+    let countStarted = false;
+    let delayedCount = false;
+    vi.spyOn(db.syncOperations, 'where').mockImplementation(((index: string) => {
+      const whereClause = originalWhere(index);
+      const originalEquals = whereClause.equals.bind(whereClause);
+      if (delayedCount) return whereClause;
+      delayedCount = true;
+      vi.spyOn(whereClause, 'equals').mockImplementationOnce(((value: string) => {
+        const collection = originalEquals(value);
+        const originalCount = collection.count.bind(collection);
+        vi.spyOn(collection, 'count').mockImplementationOnce((async () => {
+          countStarted = true;
+          await new Promise<void>((resolve) => { releaseCount = resolve; });
+          return originalCount();
+        }) as never);
+        return collection;
+      }) as typeof whereClause.equals);
+      return whereClause;
+    }) as typeof db.syncOperations.where);
+
+    controls.emit(teacherChange());
+    await vi.waitFor(() => expect(countStarted).toBe(true));
+    const stopping = engine.stop();
+    releaseCount?.();
+    await stopping;
+    await settleIndexedDb();
+
+    expect(syncStore.getState()).toEqual(stateAtStop);
+    expect(await db.teachers.get('teacher-1')).toBeUndefined();
+  });
+
+  test('stop prevents a retry delayed in state publication from pulling afterward', async () => {
+    const db = createDatabase();
+    let pulls = 0;
+    const controls = createGateway({ pullAll: async () => { pulls += 1; return []; } });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+    await engine.start();
+    const originalWhere = db.syncOperations.where.bind(db.syncOperations);
+    let releaseCount: (() => void) | undefined;
+    let countStarted = false;
+    let delayedCount = false;
+    vi.spyOn(db.syncOperations, 'where').mockImplementation(((index: string) => {
+      const whereClause = originalWhere(index);
+      const originalEquals = whereClause.equals.bind(whereClause);
+      if (delayedCount) return whereClause;
+      delayedCount = true;
+      vi.spyOn(whereClause, 'equals').mockImplementationOnce(((value: string) => {
+        const collection = originalEquals(value);
+        const originalCount = collection.count.bind(collection);
+        vi.spyOn(collection, 'count').mockImplementationOnce((async () => {
+          countStarted = true;
+          await new Promise<void>((resolve) => { releaseCount = resolve; });
+          return originalCount();
+        }) as never);
+        return collection;
+      }) as typeof whereClause.equals);
+      return whereClause;
+    }) as typeof db.syncOperations.where);
+
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(countStarted).toBe(true));
+    const stopping = engine.stop();
+    releaseCount?.();
+    await stopping;
+
+    expect(pulls).toBe(1);
   });
 });

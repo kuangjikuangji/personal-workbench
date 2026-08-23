@@ -271,12 +271,13 @@ describe('cloud gateway', () => {
     const statuses: string[] = [];
     const gateway = createCloudGateway(fake.client, userId);
 
-    const unsubscribe = gateway.subscribe((change) => changes.push(change), (status) => statuses.push(status));
+    const subscription = gateway.subscribe((change) => changes.push(change), (status) => statuses.push(status));
     fake.emitStatus('SUBSCRIBED');
+    await subscription.ready;
     fake.emitChange('app_settings', {
       key: 'theme', value: 'dark', updated_at: timestamp, deleted_at: null, server_updated_at: serverTimestamp, user_id: userId,
     });
-    await unsubscribe();
+    await subscription.unsubscribe();
 
     expect(fake.changeRegistrations).toEqual(entityKinds.map((table) => ({
       table,
@@ -293,17 +294,39 @@ describe('cloud gateway', () => {
   test('uses the old row to normalize physical realtime deletes as tombstones', () => {
     const fake = createFakeClient();
     const changes: unknown[] = [];
-    const unsubscribe = createCloudGateway(fake.client, userId).subscribe((change) => changes.push(change), () => {});
+    const subscription = createCloudGateway(fake.client, userId).subscribe((change) => changes.push(change), () => {});
 
     fake.emitDelete('app_settings', {
       key: 'theme', value: 'dark', updated_at: timestamp, deleted_at: null, server_updated_at: serverTimestamp, user_id: userId,
     }, '2026-08-23T01:02:05.000Z');
-    void unsubscribe();
+    void subscription.unsubscribe();
 
     expect(changes).toEqual([{
       entityKind: 'app_settings', entityId: 'theme', value: { key: 'theme', value: 'dark', updatedAt: timestamp },
       deletedAt: '2026-08-23T01:02:05.000Z', clientUpdatedAt: timestamp, serverUpdatedAt: serverTimestamp,
     }]);
+  });
+
+  test('readiness waits through an initial channel error until the channel is actually subscribed', async () => {
+    const fake = createFakeClient();
+    const statuses: string[] = [];
+    const subscription = createCloudGateway(fake.client, userId).subscribe(
+      () => {},
+      (status) => statuses.push(status),
+    );
+    let ready = false;
+    void subscription.ready.then(() => { ready = true; });
+
+    fake.emitStatus('CHANNEL_ERROR');
+    await Promise.resolve();
+    expect(ready).toBe(false);
+
+    fake.emitStatus('SUBSCRIBED');
+    await subscription.ready;
+
+    expect(ready).toBe(true);
+    expect(statuses).toEqual(['CHANNEL_ERROR', 'SUBSCRIBED']);
+    await subscription.unsubscribe();
   });
 
   test('classifies authorization failures without exposing sensitive remote details', async () => {
@@ -354,7 +377,7 @@ describe('cloud gateway', () => {
       .toThrow(new CloudGatewayError('network'));
 
     const fake = createFakeClient({ removeReject: rejected });
-    const unsubscribe = createCloudGateway(fake.client, userId).subscribe(() => {}, () => {});
-    await expect(unsubscribe()).rejects.toEqual(new CloudGatewayError('network'));
+    const subscription = createCloudGateway(fake.client, userId).subscribe(() => {}, () => {});
+    await expect(subscription.unsubscribe()).rejects.toEqual(new CloudGatewayError('network'));
   });
 });

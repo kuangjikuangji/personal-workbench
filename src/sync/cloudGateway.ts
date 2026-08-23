@@ -37,10 +37,14 @@ export type CloudGateway = {
   subscribe: (
     onChange: (change: CloudChange) => void,
     onStatus: (status: string) => void,
-  ) => () => Promise<void>;
+  ) => CloudSubscription;
 };
 
 export type CloudApplyResult = { applied: boolean; change: CloudChange };
+export type CloudSubscription = {
+  ready: Promise<void>;
+  unsubscribe: () => Promise<void>;
+};
 
 type RemoteError = { code?: unknown; status?: unknown };
 type QueryResult = { data: Record<string, unknown>[] | null; error: RemoteError | null };
@@ -148,6 +152,8 @@ export function createCloudGateway(client: SupabaseClient<Database>, userId: str
     subscribe(onChange, onStatus) {
       try {
         let active = true;
+        let markReady: (() => void) | undefined;
+        const ready = new Promise<void>((resolve) => { markReady = resolve; });
         const channel = entityKinds.reduce<RealtimeChannel>((current, entityKind) => current.on(
           'postgres_changes',
           { event: '*', schema: 'public', table: entityKind, filter: `user_id=eq.${userId}` },
@@ -162,16 +168,21 @@ export function createCloudGateway(client: SupabaseClient<Database>, userId: str
         ), client.channel(`workbench-sync-${userId}`));
 
         channel.subscribe((status) => {
-          if (active) onStatus(status);
+          if (!active) return;
+          onStatus(status);
+          if (status === 'SUBSCRIBED') markReady?.();
         });
 
-        return async () => {
-          active = false;
-          try {
-            await client.removeChannel(channel);
-          } catch (error) {
-            return throwGatewayError(error);
-          }
+        return {
+          ready,
+          unsubscribe: async () => {
+            active = false;
+            try {
+              await client.removeChannel(channel);
+            } catch (error) {
+              return throwGatewayError(error);
+            }
+          },
         };
       } catch (error) {
         return throwGatewayError(error);

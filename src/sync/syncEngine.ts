@@ -2,7 +2,7 @@ import { liveQuery, type Table } from 'dexie';
 import type { WorkbenchDatabase } from '../db/database';
 import type { CloudChange, CloudGateway } from './cloudGateway';
 import { entityRegistry } from './entityRegistry';
-import { setSyncState, syncStore } from './syncStore';
+import { setSyncState } from './syncStore';
 import type { EntityKind, SyncOperation } from './types';
 
 const retryDelays = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
@@ -94,7 +94,11 @@ function localTable(db: WorkbenchDatabase, entityKind: EntityKind): Table<Record
  * last-modified-wins path. Accepted tombstones retain a compact version marker
  * so an older pull cannot resurrect a record that is absent from the mirror.
  */
-export async function applyRemoteChange(db: WorkbenchDatabase, change: CloudChange): Promise<boolean> {
+export async function applyRemoteChange(
+  db: WorkbenchDatabase,
+  change: CloudChange,
+  excludedOperationId?: string,
+): Promise<boolean> {
   const table = localTable(db, change.entityKind);
   const key = versionKey(change);
 
@@ -103,8 +107,10 @@ export async function applyRemoteChange(db: WorkbenchDatabase, change: CloudChan
       table.get(change.entityId),
       db.syncMetadata.get(key),
       db.syncOperations
-        .filter(({ entityKind, entityId }) => (
-          entityKind === change.entityKind && entityId === change.entityId
+        .filter(({ id, entityKind, entityId }) => (
+          id !== excludedOperationId
+          && entityKind === change.entityKind
+          && entityId === change.entityId
         ))
         .toArray(),
     ]);
@@ -147,9 +153,15 @@ export function createSyncEngine({
   online = browserOnline,
 }: SyncEngineOptions): SyncEngine {
   let active = false;
-  let started = false;
+  let stopped = false;
   let connectedOnce = false;
   let channelDisconnected = false;
+  let channelReady = false;
+  let initialPullComplete = false;
+  let synchronizationActive = false;
+  let remoteWorkCount = 0;
+  let lastError: string | null = null;
+  let stateRevision = 0;
   let unsubscribe: (() => Promise<void>) | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryIndex = 0;
@@ -157,14 +169,42 @@ export function createSyncEngine({
   let synchronizationRequested = false;
   let remoteWork = Promise.resolve();
   let queueSubscription: { unsubscribe: () => void } | null = null;
+  let initializationPromise: Promise<void> | null = null;
+  let stopPromise: Promise<void> | null = null;
+  let signalStop: (() => void) | undefined;
+  const stopRequested = new Promise<void>((resolve) => { signalStop = resolve; });
 
   async function pendingCount(): Promise<number> {
     return db.syncOperations.where('userId').equals(userId).count();
   }
 
-  async function publish(status: 'syncing' | 'synced' | 'offline' | 'error', message: string | null): Promise<void> {
+  function publishKnownCount(count: number): void {
+    stateRevision += 1;
     if (!active) return;
-    setSyncState({ status, pendingCount: await pendingCount(), message });
+
+    if (!online()) {
+      setSyncState({ status: 'offline', pendingCount: count, message: null });
+    } else if (lastError) {
+      setSyncState({ status: 'error', pendingCount: count, message: lastError });
+    } else if (
+      synchronizationActive
+      || remoteWorkCount > 0
+      || !channelReady
+      || !initialPullComplete
+      || count > 0
+    ) {
+      setSyncState({ status: 'syncing', pendingCount: count, message: null });
+    } else {
+      setSyncState({ status: 'synced', pendingCount: 0, message: null });
+    }
+  }
+
+  async function publishState(): Promise<void> {
+    const revision = stateRevision + 1;
+    stateRevision = revision;
+    const count = await pendingCount();
+    if (!active || revision !== stateRevision) return;
+    publishKnownCount(count);
   }
 
   function clearRetryTimer(): void {
@@ -185,13 +225,14 @@ export function createSyncEngine({
   }
 
   async function handleFailure(error: unknown): Promise<void> {
-    await publish(online() ? 'error' : 'offline', online() ? errorMessage(error) : null);
+    lastError = errorMessage(error);
+    await publishState();
     scheduleRetry();
   }
 
   async function ensureMirrorOwner(): Promise<void> {
     const owner = await db.syncMetadata.get('mirrorOwner');
-    if (owner?.value === userId) return;
+    if (!active || owner?.value === userId) return;
 
     const businessTables = [...new Set(
       Object.values(entityRegistry).map(({ localTable: tableName }) => db.table(tableName)),
@@ -200,6 +241,7 @@ export function createSyncEngine({
       'rw',
       [...businessTables, db.syncOperations, db.syncMetadata],
       async () => {
+        if (!active) return;
         await Promise.all(businessTables.map((table) => table.clear()));
         await db.syncOperations.clear();
         await db.syncMetadata.clear();
@@ -213,36 +255,41 @@ export function createSyncEngine({
   }
 
   async function flushQueue(): Promise<void> {
-    const operations = await db.syncOperations
-      .where('userId')
-      .equals(userId)
-      .sortBy('createdAt');
+    while (active) {
+      const operations = await db.syncOperations
+        .where('userId')
+        .equals(userId)
+        .sortBy('createdAt');
+      if (operations.length === 0) return;
 
-    for (const operation of operations) {
-      if (!active) return;
-      try {
-        const acknowledgement = await gateway.apply(operation);
+      for (const operation of operations) {
         if (!active) return;
-        await applyRemoteChange(db, acknowledgement.change);
-        await db.syncOperations.delete(operation.id);
-        await publish('syncing', null);
-      } catch (error) {
-        await db.syncOperations.update(operation.id, {
-          retryCount: operation.retryCount + 1,
-          lastError: errorMessage(error),
-        });
-        throw error;
+        try {
+          const acknowledgement = await gateway.apply(operation);
+          if (!active) return;
+          await applyRemoteChange(db, acknowledgement.change, operation.id);
+          await db.syncOperations.delete(operation.id);
+        } catch (error) {
+          await db.syncOperations.update(operation.id, {
+            retryCount: operation.retryCount + 1,
+            lastError: errorMessage(error),
+          });
+          throw error;
+        }
       }
     }
   }
 
   async function performSynchronization(): Promise<void> {
+    if (!active) return;
     if (!online()) {
-      await publish('offline', null);
+      await publishState();
       return;
     }
 
-    await publish('syncing', null);
+    lastError = null;
+    await publishState();
+    if (!active) return;
     try {
       const changes = await gateway.pullAll();
       if (!active) return;
@@ -250,8 +297,8 @@ export function createSyncEngine({
       await flushQueue();
       if (!active) return;
       retryIndex = 0;
+      initialPullComplete = true;
       clearRetryTimer();
-      await publish('synced', null);
     } catch (error) {
       await handleFailure(error);
     }
@@ -264,13 +311,18 @@ export function createSyncEngine({
       return syncInFlight;
     }
 
+    synchronizationActive = true;
     syncInFlight = (async () => {
+      await publishState();
+      if (!active) return;
       do {
         synchronizationRequested = false;
         await performSynchronization();
       } while (active && synchronizationRequested);
-    })().finally(() => {
+    })().finally(async () => {
+      synchronizationActive = false;
       syncInFlight = null;
+      await publishState();
     });
     return syncInFlight;
   }
@@ -282,8 +334,7 @@ export function createSyncEngine({
       queueSubscription = liveQuery(() => pendingCount()).subscribe({
         next(count) {
           if (!active) return;
-          const state = syncStore.getState();
-          setSyncState({ ...state, pendingCount: count });
+          publishKnownCount(count);
           if (initialObservation) {
             initialObservation = false;
             observedPending = count;
@@ -308,12 +359,16 @@ export function createSyncEngine({
     if (!active) return;
     remoteWork = remoteWork.then(async () => {
       if (!active) return;
-      await publish('syncing', null);
+      remoteWorkCount += 1;
       try {
+        await publishState();
+        if (!active) return;
         await applyRemoteChange(db, change);
-        await publish('synced', null);
       } catch (error) {
         await handleFailure(error);
+      } finally {
+        remoteWorkCount -= 1;
+        await publishState();
       }
     });
   }
@@ -321,13 +376,17 @@ export function createSyncEngine({
   function handleChannelStatus(status: string): void {
     if (!active) return;
     if (status === 'SUBSCRIBED') {
+      channelReady = true;
+      void publishState();
       if (connectedOnce && channelDisconnected) void retry();
       connectedOnce = true;
       channelDisconnected = false;
       return;
     }
     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+      channelReady = false;
       channelDisconnected = true;
+      void publishState();
     }
   }
 
@@ -335,21 +394,30 @@ export function createSyncEngine({
     if (active && online()) void retry();
   }
 
-  async function start(): Promise<void> {
-    if (started) return syncInFlight ?? Promise.resolve();
-    started = true;
-    active = true;
+  async function initialize(): Promise<void> {
     await ensureMirrorOwner();
     if (!active) return;
 
-    unsubscribe = gateway.subscribe(handleRemoteChange, handleChannelStatus);
+    const subscription = gateway.subscribe(handleRemoteChange, handleChannelStatus);
+    unsubscribe = subscription.unsubscribe;
+    await Promise.race([subscription.ready, stopRequested]);
+    if (!active) return;
+    channelReady = true;
     if (typeof window !== 'undefined') {
       window.addEventListener('online', handleResume);
       window.addEventListener('focus', handleResume);
     }
-    await observeQueue();
+    await Promise.race([observeQueue(), stopRequested]);
     if (!active) return;
     await synchronize();
+  }
+
+  function start(): Promise<void> {
+    if (initializationPromise) return initializationPromise;
+    if (stopped) return Promise.resolve();
+    active = true;
+    initializationPromise = initialize();
+    return initializationPromise;
   }
 
   async function retry(): Promise<void> {
@@ -359,9 +427,12 @@ export function createSyncEngine({
     await synchronize();
   }
 
-  async function stop(): Promise<void> {
-    if (!active && !unsubscribe) return;
+  function stop(): Promise<void> {
+    if (stopPromise) return stopPromise;
+    stopped = true;
     active = false;
+    stateRevision += 1;
+    signalStop?.();
     clearRetryTimer();
     queueSubscription?.unsubscribe();
     queueSubscription = null;
@@ -371,10 +442,14 @@ export function createSyncEngine({
     }
     const cleanup = unsubscribe;
     unsubscribe = null;
-    if (cleanup) await cleanup();
-    const inFlight = syncInFlight;
-    if (inFlight) await inFlight;
-    await remoteWork.catch(() => undefined);
+    const cleanupPromise = cleanup?.() ?? Promise.resolve();
+    stopPromise = (async () => {
+      await Promise.all([initializationPromise ?? Promise.resolve(), cleanupPromise]);
+      const inFlight = syncInFlight;
+      if (inFlight) await inFlight;
+      await remoteWork.catch(() => undefined);
+    })();
+    return stopPromise;
   }
 
   return { start, retry, stop };
