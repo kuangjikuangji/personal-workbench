@@ -31,8 +31,18 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .account-summary div { display: grid; gap: .2rem; }
 .account-summary span { color: #b9d2ec; font-size: .8rem; }
 .account-summary .button { width: 100%; }
+.sync-status { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .4rem .6rem; border: 1px solid rgb(255 255 255 / 30%); border-radius: .5rem; color: #eaf8ef; background: rgb(12 102 57 / 28%); font-size: .8rem; font-weight: 700; }
+.sync-status-syncing { color: #e1f0ff; background: rgb(46 102 157 / 38%); }
+.sync-status-offline { color: #fff1c2; background: rgb(133 91 0 / 38%); }
+.sync-status-error { color: #ffe3df; background: rgb(155 39 27 / 42%); }
+.sync-status button { min-height: 1.75rem; padding: .2rem .5rem; border: 1px solid currentColor; border-radius: .375rem; color: inherit; background: transparent; font: inherit; font-size: .75rem; font-weight: 700; cursor: pointer; }
+.sync-status button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .management-drawer .account-summary { margin-bottom: 1rem; color: #182230; border-color: #d6e0ea; background: #f5f7fb; }
 .management-drawer .account-summary span { color: #526070; }
+.management-drawer .sync-status { color: #166534; border-color: #bbdfc7; background: #ecfdf3; }
+.management-drawer .sync-status-syncing { color: #1e5d91; border-color: #b8d8ef; background: #edf7ff; }
+.management-drawer .sync-status-offline { color: #854d0e; border-color: #f1d59d; background: #fffbeb; }
+.management-drawer .sync-status-error { color: #b42318; border-color: #f5bab3; background: #fff0ee; }
 .desktop-sidebar .navigation-link:hover, .desktop-sidebar .navigation-link:focus-visible, .desktop-sidebar .navigation-link.is-active { color: #173b67; background: #fff; outline: 0; }
 .app-content { padding: clamp(1.5rem, 5vw, 3rem); }
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
@@ -85,6 +95,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 :root[data-theme="dark"] .field input, :root[data-theme="dark"] .field select, :root[data-theme="dark"] .field textarea { color: #e9eff7; border-color: #52647b; background: #111827; }
 :root[data-theme="dark"] .button-secondary { color: #e9eff7; border-color: #6c8099; background: #273449; }
 :root[data-theme="dark"] .button-ghost { color: #b9d2ec; }
+:root[data-theme="dark"] .management-drawer .sync-status { color: #86efac; border-color: #3f6c50; background: #183b28; }
+:root[data-theme="dark"] .management-drawer .sync-status-syncing { color: #bae6fd; border-color: #3a6480; background: #183344; }
+:root[data-theme="dark"] .management-drawer .sync-status-offline { color: #fde68a; border-color: #725c28; background: #3e3215; }
+:root[data-theme="dark"] .management-drawer .sync-status-error { color: #fecaca; border-color: #7f3d38; background: #481f1c; }
 :root[data-theme="dark"] .muted, :root[data-theme="dark"] .today-timeline span, :root[data-theme="dark"] .page-header p, :root[data-theme="dark"] .responsive-table th, :root[data-theme="dark"] .semester-list p, :root[data-theme="dark"] .content-cards p:last-child, :root[data-theme="dark"] .student-record-list span:not(.tag) { color: #b7c4d5; }
 :root[data-theme="dark"] .responsive-table th, :root[data-theme="dark"] .responsive-table td, :root[data-theme="dark"] .today-timeline li { border-color: #415167; }
 :root[data-theme="dark"] .calendar-surface { --fc-border-color: #52647b; --fc-page-bg-color: #1f2937; --fc-neutral-bg-color: #273449; --fc-list-event-hover-bg-color: #273449; }

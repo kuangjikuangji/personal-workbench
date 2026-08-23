@@ -38,6 +38,25 @@ test('shows the authenticated account and provides logout on desktop and mobile'
   expect(screen.getAllByRole('button', { name: '退出登录' })).toHaveLength(2);
 });
 
+test('shows the supplied synchronization status beside each account summary', async () => {
+  const user = userEvent.setup();
+  render(
+    <MemoryRouter>
+      <AppShell
+        profile={profile}
+        onSignOut={vi.fn()}
+        syncStatus={<p role="status">已同步</p>}
+      >
+        <h2>占位内容</h2>
+      </AppShell>
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByRole('status')).toHaveTextContent('已同步');
+  await user.click(screen.getByRole('button', { name: '我的' }));
+  expect(screen.getAllByRole('status')).toHaveLength(2);
+});
+
 test('provides the five prescribed mobile destinations and separates management from personal drawers', async () => {
   const user = userEvent.setup();
   renderAtRoute('/');

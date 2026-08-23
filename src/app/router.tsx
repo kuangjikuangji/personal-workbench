@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { Route, Routes, useSearchParams } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { navigation } from './navigation';
@@ -29,9 +29,9 @@ function PlaceholderPage({ title }: { title: string }) {
   );
 }
 
-export function AppRouter({ profile, onSignOut }: { profile: Profile; onSignOut(): Promise<void> }) {
+export function AppRouter({ profile, onSignOut, syncStatus }: { profile: Profile; onSignOut(): Promise<void>; syncStatus?: ReactNode }) {
   return (
-    <AppShell profile={profile} onSignOut={onSignOut}>
+    <AppShell profile={profile} onSignOut={onSignOut} syncStatus={syncStatus}>
       <Suspense fallback={<p role="status">正在加载页面……</p>}><Routes>
         <Route element={<DashboardPage />} path="/" />
         <Route element={<TodoPage />} path="/todos" />

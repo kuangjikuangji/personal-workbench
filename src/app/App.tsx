@@ -9,6 +9,7 @@ import { useAuth } from '../features/auth/AuthProvider';
 import { getWorkbenchSupabaseClient } from '../lib/supabase/client';
 import { readSupabaseConfig } from '../lib/supabase/config';
 import { SyncProvider, type SyncProviderDependencies } from '../sync/SyncProvider';
+import { SyncStatus } from '../sync/SyncStatus';
 
 const defaultConfig = readSupabaseConfig(import.meta.env);
 const workbenchDatabase = new WorkbenchDatabase();
@@ -28,7 +29,7 @@ function AuthenticatedWorkbench({
     <SyncProvider dependencies={syncDependencies} identity={identity} key={identity.session.user.id}>
       {(repositories) => (
         <AppProviders repositories={repositories}>
-          <AppRouter profile={identity.profile} onSignOut={auth.signOut} />
+          <AppRouter profile={identity.profile} onSignOut={auth.signOut} syncStatus={<SyncStatus />} />
         </AppProviders>
       )}
     </SyncProvider>
