@@ -155,6 +155,15 @@ async function waitForAsyncCondition(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
+function nextSyncStateChange(): Promise<void> {
+  return new Promise((resolve) => {
+    const unsubscribe = syncStore.subscribe(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
 beforeEach(() => {
   resetSyncState();
   vi.useRealTimers();
@@ -455,6 +464,76 @@ describe('queue acknowledgement', () => {
     expect(appliedIds).toEqual(['first-operation', 'replacement-operation']);
     expect(await db.syncOperations.count()).toBe(0);
     expect(syncStore.getState().status).toBe('synced');
+    await engine.stop();
+  });
+
+  test('wakes for an online same-count handoff even when the observer never sees zero', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.syncOperations.add(operation({ id: 'old-operation' }));
+    let isOnline = false;
+    const appliedIds: string[] = [];
+    const controls = createGateway({
+      apply: async (pending) => {
+        appliedIds.push(pending.id);
+        return { applied: true, change: teacherChange() };
+      },
+    });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => isOnline });
+
+    await engine.start();
+    expect(syncStore.getState()).toEqual({ status: 'offline', pendingCount: 1, message: null });
+
+    const offlineObservation = nextSyncStateChange();
+    await db.transaction('rw', db.syncOperations, async () => {
+      await db.syncOperations.delete('old-operation');
+      await db.syncOperations.add(operation({ id: 'offline-replacement' }));
+    });
+    await offlineObservation;
+    expect(appliedIds).toEqual([]);
+
+    isOnline = true;
+    const onlineObservation = nextSyncStateChange();
+    await db.transaction('rw', db.syncOperations, async () => {
+      await db.syncOperations.delete('offline-replacement');
+      await db.syncOperations.add(operation({ id: 'online-replacement' }));
+    });
+    await onlineObservation;
+    await waitForAsyncCondition(() => appliedIds.includes('online-replacement'));
+    await waitForValue(() => db.syncOperations.count(), 0);
+
+    expect(appliedIds).toEqual(['online-replacement']);
+    expect(await db.syncOperations.count()).toBe(0);
+    expect(syncStore.getState().status).toBe('synced');
+    await engine.stop();
+  });
+
+  test('recounts a stale zero observation before publishing synced', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    const controls = createGateway();
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+    await engine.start();
+    expect(syncStore.getState().status).toBe('synced');
+
+    const originalWhere = db.syncOperations.where.bind(db.syncOperations);
+    vi.spyOn(db.syncOperations, 'where').mockImplementationOnce(((index: string) => {
+      const whereClause = originalWhere(index);
+      const originalEquals = whereClause.equals.bind(whereClause);
+      vi.spyOn(whereClause, 'equals').mockImplementationOnce(((value: string) => {
+        const collection = originalEquals(value);
+        vi.spyOn(collection, 'count').mockResolvedValueOnce(0);
+        return collection;
+      }) as typeof whereClause.equals);
+      return whereClause;
+    }) as typeof db.syncOperations.where);
+
+    const observation = nextSyncStateChange();
+    await db.syncOperations.add(operation({ id: 'fresh-operation' }));
+    await observation;
+
+    expect(await db.syncOperations.count()).toBe(1);
+    expect(syncStore.getState()).toEqual({ status: 'syncing', pendingCount: 1, message: null });
     await engine.stop();
   });
 

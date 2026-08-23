@@ -280,27 +280,29 @@ export function createSyncEngine({
     }
   }
 
-  async function performSynchronization(): Promise<void> {
-    if (!active) return;
+  async function performSynchronization(): Promise<boolean> {
+    if (!active) return false;
     if (!online()) {
       await publishState();
-      return;
+      return false;
     }
 
     lastError = null;
     await publishState();
-    if (!active) return;
+    if (!active) return false;
     try {
       const changes = await gateway.pullAll();
-      if (!active) return;
+      if (!active) return false;
       for (const change of changes) await applyRemoteChange(db, change);
       await flushQueue();
-      if (!active) return;
+      if (!active) return false;
       retryIndex = 0;
       initialPullComplete = true;
       clearRetryTimer();
+      return true;
     } catch (error) {
       await handleFailure(error);
+      return false;
     }
   }
 
@@ -317,7 +319,8 @@ export function createSyncEngine({
       if (!active) return;
       do {
         synchronizationRequested = false;
-        await performSynchronization();
+        const completed = await performSynchronization();
+        if (!completed) synchronizationRequested = false;
       } while (active && synchronizationRequested);
     })().finally(async () => {
       synchronizationActive = false;
@@ -330,20 +333,26 @@ export function createSyncEngine({
   function observeQueue(): Promise<void> {
     return new Promise((resolve) => {
       let initialObservation = true;
-      let observedPending = 0;
       queueSubscription = liveQuery(() => pendingCount()).subscribe({
         next(count) {
           if (!active) return;
-          publishKnownCount(count);
+          if (count === 0) {
+            // A count emitted from an invalidated live query may already be
+            // stale. Recount before publishing the only state that can be
+            // interpreted as fully synchronized.
+            void publishState();
+          } else {
+            publishKnownCount(count);
+          }
           if (initialObservation) {
             initialObservation = false;
-            observedPending = count;
             resolve();
-          } else if (count > observedPending && online()) {
-            observedPending = count;
+          } else if (count > 0 && online()) {
+            // A retry timer owns recovery after an error. Queue observations
+            // still wake normal idle/in-flight synchronization, but cannot
+            // turn retry metadata writes into a tight retry loop.
+            if (lastError !== null && retryTimer !== null) return;
             void synchronize();
-          } else {
-            observedPending = count;
           }
         },
         error(error) {
