@@ -865,6 +865,7 @@ export type Database = {
         Args: {
           p_client_updated_at: string
           p_deleted_at: Json
+          p_expected_user_id: string
           p_record: Json
           p_table: string
         }

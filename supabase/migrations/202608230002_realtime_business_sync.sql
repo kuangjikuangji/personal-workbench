@@ -143,6 +143,32 @@ begin
     raise exception using errcode = '22023', message = 'entity_identity_required';
   end if;
 
+  if p_deleted_at is not null then
+    update public.todos as target
+    set
+      updated_at = p_client_updated_at,
+      deleted_at = p_deleted_at
+    where target.user_id = v_user_id
+      and target.id = v_identity::uuid
+      and greatest(p_client_updated_at, p_deleted_at) >= greatest(
+        target.updated_at,
+        coalesce(target.deleted_at, target.updated_at)
+      )
+    returning to_jsonb(target)
+    into v_row;
+
+    v_applied := v_row is not null;
+    if not v_applied then
+      select to_jsonb(target)
+      into v_row
+      from public.todos target
+      where target.user_id = v_user_id
+        and target.id = v_identity::uuid;
+    end if;
+
+    return jsonb_build_object('applied', v_applied, 'row', v_row);
+  end if;
+
   v_record := (p_record - array[
     'user_id', 'updated_at', 'deleted_at', 'server_updated_at'
   ]) || jsonb_build_object(
@@ -175,7 +201,7 @@ begin
     and greatest(
       excluded.updated_at,
       coalesce(excluded.deleted_at, excluded.updated_at)
-    ) > greatest(
+    ) >= greatest(
       target.updated_at,
       coalesce(target.deleted_at, target.updated_at)
     )
@@ -224,7 +250,8 @@ create function public.apply_workbench_change(
   p_table text,
   p_record jsonb,
   p_client_updated_at timestamptz,
-  p_deleted_at jsonb
+  p_deleted_at jsonb,
+  p_expected_user_id uuid
 )
 returns jsonb
 language plpgsql
@@ -249,6 +276,9 @@ begin
     'students', 'student_records', 'app_settings'
   ) then
     raise exception using errcode = '22023', message = 'table_not_allowed';
+  end if;
+  if p_expected_user_id is null or v_user_id is distinct from p_expected_user_id then
+    raise exception using errcode = '42501', message = 'expected_user_mismatch';
   end if;
   if v_user_id is null or not public.current_user_can_access() then
     raise exception using errcode = '42501', message = 'not_allowed';
@@ -279,6 +309,65 @@ begin
       p_client_updated_at,
       v_deleted_at
     );
+  end if;
+
+  if v_deleted_at is not null then
+    if p_table = 'app_settings' then
+      execute format(
+        'update public.%I as target
+         set updated_at = $3, deleted_at = $4
+         where target.user_id = $1
+           and target.key = $2
+           and greatest($3, $4) >= greatest(
+             target.updated_at,
+             coalesce(target.deleted_at, target.updated_at)
+           )
+         returning to_jsonb(target)',
+        p_table
+      )
+      using v_user_id, v_entity_identity, p_client_updated_at, v_deleted_at
+      into v_row;
+    else
+      execute format(
+        'update public.%I as target
+         set updated_at = $3, deleted_at = $4
+         where target.user_id = $1
+           and target.id = $2::uuid
+           and greatest($3, $4) >= greatest(
+             target.updated_at,
+             coalesce(target.deleted_at, target.updated_at)
+           )
+         returning to_jsonb(target)',
+        p_table
+      )
+      using v_user_id, v_entity_identity, p_client_updated_at, v_deleted_at
+      into v_row;
+    end if;
+
+    v_applied := v_row is not null;
+    if not v_applied then
+      if p_table = 'app_settings' then
+        execute format(
+          'select to_jsonb(target)
+           from public.%I target
+           where target.user_id = $1 and target.key = $2',
+          p_table
+        )
+        using v_user_id, v_entity_identity
+        into v_row;
+      else
+        execute format(
+          'select to_jsonb(target)
+           from public.%I target
+           where target.user_id = $1 and target.id = $2::uuid',
+          p_table
+        )
+        using v_user_id, v_entity_identity
+        into v_row;
+      end if;
+    end if;
+
+    return jsonb_build_object('applied', v_applied, 'row', v_row);
   end if;
 
   v_record := (p_record - array[
@@ -313,7 +402,7 @@ begin
      where greatest(
        excluded.updated_at,
        coalesce(excluded.deleted_at, excluded.updated_at)
-     ) > greatest(
+     ) >= greatest(
        target.updated_at,
        coalesce(target.deleted_at, target.updated_at)
      )
@@ -355,8 +444,8 @@ end;
 $$;
 
 revoke all on function public.apply_workbench_change(
-  text, jsonb, timestamptz, jsonb
+  text, jsonb, timestamptz, jsonb, uuid
 ) from public;
 grant execute on function public.apply_workbench_change(
-  text, jsonb, timestamptz, jsonb
+  text, jsonb, timestamptz, jsonb, uuid
 ) to authenticated, service_role;

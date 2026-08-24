@@ -168,14 +168,16 @@ test('restores a validated cached profile only after an offline profile fetch fa
   expect(await screen.findByText('离线恢复：zhoujingjing')).toBeInTheDocument();
 });
 
-test('does not use the cached profile when the profile request fails while online', async () => {
+test('freezes behind neutral verification UI when the initial online profile transport fails', async () => {
   const cache = profileCache();
   cache.write(activeProfile);
+  const signOut = vi.fn(async () => undefined);
   render(
     <AuthProvider
       backend={backend({
         getSession: async () => persistentSession(),
         getProfile: async () => { throw new Error('service unavailable'); },
+        signOut,
       })}
       online={() => true}
       profileCache={cache}
@@ -184,16 +186,48 @@ test('does not use the cached profile when the profile request fails while onlin
     </AuthProvider>,
   );
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('登录状态验证失败');
+  expect(await screen.findByRole('status')).toHaveTextContent('正在验证登录状态');
   expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
+  expect(cache.read('user-1')).toEqual(activeProfile);
+  expect(signOut).not.toHaveBeenCalled();
 });
 
-test('fails closed without an unhandled rejection when profile validation and local cleanup both reject', async () => {
+test('does not fall back to cached authority when an online profile request drops offline', async () => {
+  const cache = profileCache();
+  cache.write(activeProfile);
+  let isOnline = true;
+  const signOut = vi.fn(async () => undefined);
+  const getProfile = vi.fn(async () => {
+    isOnline = false;
+    throw new Error('transport dropped');
+  });
+  render(
+    <AuthProvider
+      backend={backend({
+        getSession: async () => persistentSession(),
+        getProfile,
+        signOut,
+      })}
+      online={() => isOnline}
+      profileCache={cache}
+    >
+      <AuthGate>{() => <div>protected workbench</div>}</AuthGate>
+    </AuthProvider>,
+  );
+
+  await waitFor(() => expect(getProfile).toHaveBeenCalledTimes(1));
+  expect(await screen.findByRole('status')).toHaveTextContent('正在验证登录状态');
+  expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
+  expect(cache.read('user-1')).toEqual(activeProfile);
+  expect(signOut).not.toHaveBeenCalled();
+});
+
+test('hides protected UI but preserves the mirror cleanup lease when online profile revalidation fails', async () => {
   const cache = profileCache();
   const restoredSession = persistentSession();
   let emitSession: ((nextSession: Session | null) => void) | undefined;
   let profileRequests = 0;
-  const cleanup = vi.fn(async () => { throw new Error('indexeddb cleanup failed'); });
+  const cleanup = vi.fn(async () => undefined);
   const signOut = vi.fn(async () => undefined);
   render(
     <AuthProvider
@@ -226,11 +260,11 @@ test('fails closed without an unhandled rejection when profile validation and lo
 
   act(() => { emitSession?.(restoredSession); });
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('登录状态验证失败');
+  expect(await screen.findByRole('status')).toHaveTextContent('正在验证登录状态');
   expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
-  expect(cleanup).toHaveBeenCalledTimes(1);
-  expect(signOut).toHaveBeenCalledTimes(1);
-  expect(cache.read('user-1')).toBeNull();
+  expect(cleanup).not.toHaveBeenCalled();
+  expect(signOut).not.toHaveBeenCalled();
+  expect(cache.read('user-1')).toEqual(activeProfile);
 });
 
 test.each([

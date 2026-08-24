@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import type { SyncOperation } from './types';
-import { compactOperations } from './operationQueue';
+import { compactOperationBatches, compactOperations } from './operationQueue';
 
 const firstTime = '2026-08-23T01:00:00.000Z';
 const secondTime = '2026-08-23T02:00:00.000Z';
+const thirdTime = '2026-08-23T03:00:00.000Z';
 
 function operation(
   overrides: Partial<SyncOperation> = {},
@@ -32,6 +33,68 @@ function operation(
 }
 
 describe('operation queue compaction', () => {
+  test('retains every acknowledged source id while submitting the latest id and create provenance', () => {
+    const created = operation({ id: 'created-operation', localCreate: true });
+    const updated = operation({
+      id: 'updated-operation',
+      localCreate: false,
+      clientUpdatedAt: secondTime,
+      createdAt: secondTime,
+      record: {
+        id: 'teacher-1', name: '李老师', department: '', archivedAt: null,
+        createdAt: firstTime, updatedAt: secondTime,
+      },
+    });
+
+    expect(compactOperationBatches([created, updated])).toEqual({
+      batches: [{
+        operation: expect.objectContaining({
+          id: 'updated-operation',
+          localCreate: true,
+          clientUpdatedAt: secondTime,
+        }),
+        sourceOperationIds: ['created-operation', 'updated-operation'],
+      }],
+      canceledOperationIds: [],
+    });
+  });
+
+  test('reports every canceled id for an unsynchronized create followed by delete', () => {
+    const created = operation({ id: 'created-operation', localCreate: true });
+    const deleted = operation({
+      id: 'deleted-operation', type: 'delete', record: null,
+      clientUpdatedAt: secondTime, createdAt: secondTime,
+    });
+
+    expect(compactOperationBatches([created, deleted])).toEqual({
+      batches: [],
+      canceledOperationIds: ['created-operation', 'deleted-operation'],
+    });
+  });
+
+  test('preserves the earliest source order when a later snapshot is the submitted operation', () => {
+    const parentFirst = operation({ id: 'parent-create', entityId: 'teacher-parent' });
+    const child = operation({
+      id: 'dependent-create',
+      entityId: 'teacher-dependent',
+      clientUpdatedAt: secondTime,
+      createdAt: secondTime,
+    });
+    const parentLatest = operation({
+      id: 'parent-update',
+      entityId: 'teacher-parent',
+      clientUpdatedAt: thirdTime,
+      createdAt: thirdTime,
+    });
+
+    const { batches } = compactOperationBatches([parentFirst, child, parentLatest]);
+
+    expect(batches.map(({ operation: pending }) => pending.id)).toEqual([
+      'parent-update',
+      'dependent-create',
+    ]);
+  });
+
   test('keeps the last snapshot from consecutive updates', () => {
     const latest = operation({
       clientUpdatedAt: secondTime,

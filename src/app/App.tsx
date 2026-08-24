@@ -12,6 +12,7 @@ import { getWorkbenchSupabaseClient } from '../lib/supabase/client';
 import { readSupabaseConfig } from '../lib/supabase/config';
 import { SyncProvider, type SyncProviderDependencies } from '../sync/SyncProvider';
 import { SyncStatus } from '../sync/SyncStatus';
+import type { RemoteChangeListener } from '../sync/syncEngine';
 
 const defaultConfig = readSupabaseConfig(import.meta.env);
 const workbenchDatabase = new WorkbenchDatabase();
@@ -25,7 +26,7 @@ function AuthenticatedWorkbench({
 }) {
   const auth = useAuth();
   const [queryClient] = useState(() => new QueryClient());
-  const refreshQueries = useCallback(() => {
+  const refreshQueries = useCallback<RemoteChangeListener>(() => {
     void queryClient.invalidateQueries();
   }, [queryClient]);
   if (!syncDependencies) {

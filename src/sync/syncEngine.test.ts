@@ -1,8 +1,18 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { WorkbenchDatabase } from '../db/database';
-import type { CloudApplyResult, CloudChange, CloudGateway } from './cloudGateway';
-import { applyRemoteChange, createSyncEngine as buildSyncEngine, type SyncEngine } from './syncEngine';
+import {
+  CloudGatewayError,
+  type CloudApplyResult,
+  type CloudChange,
+  type CloudGateway,
+} from './cloudGateway';
+import {
+  applyRemoteChange,
+  createSyncEngine as buildSyncEngine,
+  type RemoteChangeListener,
+  type SyncEngine,
+} from './syncEngine';
 import { resetSyncState, syncStore } from './syncStore';
 import type { EntityKind, SyncOperation } from './types';
 
@@ -91,6 +101,7 @@ type GatewayControls = {
   emit: (change: CloudChange) => void;
   status: (status: string) => void;
   unsubscribed: () => number;
+  subscribed: () => number;
 };
 
 function createGateway(options: {
@@ -102,10 +113,8 @@ function createGateway(options: {
   let onChange: ((change: CloudChange) => void) | undefined;
   let onStatus: ((status: string) => void) | undefined;
   let unsubscribeCount = 0;
+  let subscribeCount = 0;
   let markReady: (() => void) | undefined;
-  const ready = options.readiness === 'manual'
-    ? new Promise<void>((resolve) => { markReady = resolve; })
-    : Promise.resolve();
 
   return {
     gateway: {
@@ -117,9 +126,13 @@ function createGateway(options: {
         return options.apply?.(pending) ?? { applied: true, change: teacherChange() };
       },
       subscribe(changeHandler, statusHandler) {
+        subscribeCount += 1;
         options.events?.push('subscribe');
         onChange = changeHandler;
         onStatus = statusHandler;
+        const ready = options.readiness === 'manual'
+          ? new Promise<void>((resolve) => { markReady = resolve; })
+          : Promise.resolve();
         const unsubscribe = async () => { unsubscribeCount += 1; };
         return { ready, unsubscribe };
       },
@@ -134,6 +147,7 @@ function createGateway(options: {
       if (status === 'SUBSCRIBED') markReady?.();
     },
     unsubscribed: () => unsubscribeCount,
+    subscribed: () => subscribeCount,
   };
 }
 
@@ -214,7 +228,7 @@ describe('sync engine startup and remote merge', () => {
     await markCurrentOwner(db);
     await db.teachers.add(teacher(thirdTime, '当前老师'));
     const controls = createGateway();
-    const onRemoteChange = vi.fn<(entityKind: EntityKind) => void>();
+    const onRemoteChange = vi.fn<RemoteChangeListener>();
     const engine = createSyncEngine({
       db,
       gateway: controls.gateway,
@@ -243,7 +257,42 @@ describe('sync engine startup and remote merge', () => {
     await waitForValue(() => db.teachers.get('teacher-1'), teacher(now().toISOString(), '实时老师'));
 
     expect(onRemoteChange).toHaveBeenCalledTimes(1);
-    expect(onRemoteChange).toHaveBeenCalledWith('teachers');
+    expect(onRemoteChange).toHaveBeenCalledWith(new Set<EntityKind>(['teachers']));
+    await engine.stop();
+  });
+
+  test('batches accepted catch-up merges into one query refresh and ignores an identical pull', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    let pulls = 0;
+    const changes = [teacherChange(), settingChange()];
+    const controls = createGateway({
+      pullAll: async () => {
+        pulls += 1;
+        return changes;
+      },
+    });
+    const onRemoteChange = vi.fn<RemoteChangeListener>();
+    const engine = createSyncEngine({
+      db,
+      gateway: controls.gateway,
+      userId,
+      now,
+      online: () => true,
+      onRemoteChange,
+    });
+
+    await engine.start();
+    expect(onRemoteChange).toHaveBeenCalledTimes(1);
+    expect(onRemoteChange).toHaveBeenLastCalledWith(
+      new Set<EntityKind>(['teachers', 'app_settings']),
+    );
+
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(pulls).toBe(2));
+    await settleIndexedDb();
+
+    expect(onRemoteChange).toHaveBeenCalledTimes(1);
     await engine.stop();
   });
 
@@ -267,6 +316,87 @@ describe('sync engine startup and remote merge', () => {
     await starting;
 
     expect(pulls).toBe(1);
+    await engine.stop();
+  });
+
+  test('observes the offline queue and installs resume listeners before realtime readiness', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.syncOperations.add(operation({ id: 'offline-before-ready' }));
+    const events: string[] = [];
+    const controls = createGateway({ events, readiness: 'manual' });
+    const addEventListener = vi.spyOn(window, 'addEventListener');
+    const engine = createSyncEngine({
+      db,
+      gateway: controls.gateway,
+      userId,
+      now,
+      online: () => false,
+    });
+
+    const starting = engine.start();
+    await vi.waitFor(() => expect(syncStore.getState()).toEqual({
+      status: 'offline', pendingCount: 1, message: null,
+    }));
+
+    expect(addEventListener).toHaveBeenCalledWith('online', expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith('focus', expect.any(Function));
+    expect(events).not.toContain('pull');
+    expect(await starting).toBe(false);
+    await engine.stop();
+  });
+
+  test('bounds realtime readiness and creates a fresh subscribed channel on safe retry', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    const events: string[] = [];
+    const controls = createGateway({ events, readiness: 'manual' });
+    const engine = createSyncEngine({
+      db,
+      gateway: controls.gateway,
+      userId,
+      now,
+      online: () => true,
+      realtimeReadyTimeoutMs: 20,
+    });
+
+    const result = await Promise.race([
+      engine.start(),
+      new Promise<'unbounded'>((resolve) => setTimeout(() => resolve('unbounded'), 100)),
+    ]);
+
+    expect(result).toBe(false);
+    expect(controls.subscribed()).toBe(1);
+    expect(controls.unsubscribed()).toBe(1);
+    expect(events).toEqual(['subscribe']);
+    expect(syncStore.getState()).toMatchObject({ status: 'error' });
+
+    const retrying = engine.retry();
+    await vi.waitFor(() => expect(controls.subscribed()).toBe(2));
+    expect(events).toEqual(['subscribe', 'subscribe']);
+    controls.status('SUBSCRIBED');
+
+    expect(await retrying).toBe(true);
+    expect(events).toEqual(['subscribe', 'subscribe', 'pull']);
+    await engine.stop();
+  });
+
+  test('fails startup safely when the realtime observer cannot be created', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    const gateway: CloudGateway = {
+      pullAll: async () => [],
+      apply: async () => { throw new Error('unused apply'); },
+      subscribe: () => { throw new CloudGatewayError('network'); },
+    };
+    const engine = createSyncEngine({ db, gateway, userId, now, online: () => true });
+
+    await expect(engine.start()).resolves.toBe(false);
+    expect(syncStore.getState()).toEqual({
+      status: 'error',
+      pendingCount: 0,
+      message: new CloudGatewayError('network').message,
+    });
     await engine.stop();
   });
 
@@ -431,6 +561,69 @@ describe('sync engine startup and remote merge', () => {
 });
 
 describe('queue acknowledgement', () => {
+  test('flushes one compacted request and removes every acknowledged source id atomically', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.teachers.put(teacher(thirdTime, '最终本地教师'));
+    await db.syncOperations.bulkAdd([
+      operation({ id: 'first-snapshot', createdAt: firstTime }),
+      operation({
+        id: 'final-snapshot',
+        record: teacher(thirdTime, '最终本地教师'),
+        clientUpdatedAt: thirdTime,
+        createdAt: thirdTime,
+      }),
+    ]);
+    const applied: SyncOperation[] = [];
+    const controls = createGateway({
+      apply: async (pending) => {
+        applied.push(pending);
+        expect((await db.syncOperations.toArray()).map(({ id }) => id).sort()).toEqual([
+          'final-snapshot', 'first-snapshot',
+        ]);
+        return {
+          applied: true,
+          change: teacherChange({
+            value: teacher(thirdTime, '最终本地教师'),
+            clientUpdatedAt: thirdTime,
+            serverUpdatedAt: now().toISOString(),
+          }),
+        };
+      },
+    });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    await engine.start();
+
+    expect(applied).toEqual([
+      expect.objectContaining({ id: 'final-snapshot', localCreate: false, clientUpdatedAt: thirdTime }),
+    ]);
+    expect(await db.syncOperations.count()).toBe(0);
+    await engine.stop();
+  });
+
+  test('dequeues a compacted local create-delete cancellation without contacting cloud', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.syncOperations.bulkAdd([
+      operation({ id: 'local-create', localCreate: true, createdAt: firstTime }),
+      operation({
+        id: 'local-delete', localCreate: true, type: 'delete', record: null,
+        clientUpdatedAt: secondTime, createdAt: secondTime,
+      }),
+    ]);
+    const apply = vi.fn<CloudGateway['apply']>();
+    const controls = createGateway({ apply });
+    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+    await engine.start();
+
+    expect(apply).not.toHaveBeenCalled();
+    expect(await db.syncOperations.count()).toBe(0);
+    expect(syncStore.getState().status).toBe('synced');
+    await engine.stop();
+  });
+
   test('automatically flushes an operation created after the session is already synchronized', async () => {
     const db = createDatabase();
     await markCurrentOwner(db);
@@ -603,6 +796,7 @@ describe('queue acknowledgement', () => {
     await markCurrentOwner(db);
     await db.teachers.put(teacher(secondTime, '本地编辑'));
     await db.syncOperations.add(operation());
+    const onRemoteChange = vi.fn<RemoteChangeListener>();
     const controls = createGateway({
       apply: async () => ({
         applied: false,
@@ -613,12 +807,16 @@ describe('queue acknowledgement', () => {
         }),
       }),
     });
-    const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+    const engine = createSyncEngine({
+      db, gateway: controls.gateway, userId, now, online: () => true, onRemoteChange,
+    });
 
     await engine.start();
 
     expect(await db.teachers.get('teacher-1')).toEqual(teacher(thirdTime, '服务器权威值'));
     expect(await db.syncOperations.count()).toBe(0);
+    expect(onRemoteChange).toHaveBeenCalledTimes(1);
+    expect(onRemoteChange).toHaveBeenCalledWith(new Set<EntityKind>(['teachers']));
     await engine.stop();
   });
 
@@ -654,31 +852,39 @@ describe('queue acknowledgement', () => {
     const db = createDatabase();
     await markCurrentOwner(db);
     await db.teachers.put(teacher(thirdTime, '更新的本地教师'));
-    await db.syncOperations.bulkAdd([
-      operation({ id: 'acknowledged-delete', type: 'delete', record: null, createdAt: firstTime }),
-      operation({
-        id: 'newer-upsert',
-        record: teacher(thirdTime, '更新的本地教师'),
-        clientUpdatedAt: thirdTime,
-        createdAt: thirdTime,
-      }),
-    ]);
-    const controls = createGateway({
-      apply: async (pending) => {
-        if (pending.id === 'newer-upsert') throw new Error('leave newer operation queued');
-        return {
-          applied: false,
-          change: teacherChange({
-            value: teacher(secondTime, '较早的服务器教师'),
-            clientUpdatedAt: secondTime,
-            serverUpdatedAt: thirdTime,
-          }),
-        };
-      },
+    await db.syncOperations.add(operation({
+      id: 'acknowledged-delete', type: 'delete', record: null, createdAt: firstTime,
+    }));
+    let releaseAcknowledgement: ((result: CloudApplyResult) => void) | undefined;
+    const acknowledgement = new Promise<CloudApplyResult>((resolve) => {
+      releaseAcknowledgement = resolve;
     });
+    const apply = vi.fn(async (pending: SyncOperation) => {
+        if (pending.id === 'newer-upsert') throw new Error('leave newer operation queued');
+        return acknowledgement;
+    });
+    const controls = createGateway({ apply });
     const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
 
-    await engine.start();
+    const starting = engine.start();
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'acknowledged-delete' }),
+    ));
+    await db.syncOperations.add(operation({
+      id: 'newer-upsert',
+      record: teacher(thirdTime, '更新的本地教师'),
+      clientUpdatedAt: thirdTime,
+      createdAt: thirdTime,
+    }));
+    releaseAcknowledgement?.({
+      applied: false,
+      change: teacherChange({
+        value: teacher(secondTime, '较早的服务器教师'),
+        clientUpdatedAt: secondTime,
+        serverUpdatedAt: thirdTime,
+      }),
+    });
+    await starting;
 
     expect(await db.teachers.get('teacher-1')).toEqual(teacher(thirdTime, '更新的本地教师'));
     expect((await db.syncOperations.toArray()).map(({ id }) => id)).toEqual(['newer-upsert']);
@@ -725,6 +931,83 @@ describe('queue acknowledgement', () => {
 });
 
 describe('retry triggers and lifecycle', () => {
+  test.each(['permission', 'validation'] as const)(
+    'keeps a %s failure queued without an automatic retry loop and allows manual retry',
+    async (kind) => {
+      const db = createDatabase();
+      await markCurrentOwner(db);
+      await db.syncOperations.add(operation({ id: `${kind}-failure` }));
+      let attempts = 0;
+      let rejectFirstAttempt: ((error: CloudGatewayError) => void) | undefined;
+      const controls = createGateway({
+        apply: async () => {
+          attempts += 1;
+          if (attempts === 1) {
+            await new Promise<never>((_resolve, reject) => { rejectFirstAttempt = reject; });
+          }
+          throw new CloudGatewayError(kind);
+        },
+      });
+      const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
+
+      const starting = engine.start();
+      await vi.waitFor(() => expect(attempts).toBe(1));
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      rejectFirstAttempt?.(new CloudGatewayError(kind));
+      await settleIndexedDb();
+      await starting;
+
+      expect(vi.getTimerCount()).toBe(0);
+      expect(await db.syncOperations.get(`${kind}-failure`)).toMatchObject({
+        retryCount: 1,
+        lastError: new CloudGatewayError(kind).message,
+      });
+      expect(syncStore.getState()).toMatchObject({ status: 'error', pendingCount: 1 });
+
+      await engine.retry();
+      expect(attempts).toBe(2);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(attempts).toBe(2);
+      await engine.stop();
+    },
+  );
+
+  test('pauses and signals the auth controller once when a gateway request loses authentication', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    await db.syncOperations.add(operation({ id: 'auth-failure' }));
+    let attempts = 0;
+    const onAuthError = vi.fn();
+    const controls = createGateway({
+      apply: async () => {
+        attempts += 1;
+        throw new CloudGatewayError('auth');
+      },
+    });
+    const engine = createSyncEngine({
+      db,
+      gateway: controls.gateway,
+      userId,
+      now,
+      online: () => true,
+      onAuthError,
+    });
+
+    await engine.start();
+    await db.syncOperations.add(operation({ id: 'auth-failure-2', entityId: 'teacher-2' }));
+    window.dispatchEvent(new Event('focus'));
+    await settleIndexedDb();
+
+    expect(onAuthError).toHaveBeenCalledTimes(1);
+    expect(attempts).toBe(1);
+    expect(await engine.retry()).toBe(false);
+    expect((await db.syncOperations.toArray()).map(({ id }) => id).sort()).toEqual([
+      'auth-failure', 'auth-failure-2',
+    ]);
+    await engine.stop();
+  });
+
   test('stays offline with its queue intact and retries immediately after the online event', async () => {
     const db = createDatabase();
     await markCurrentOwner(db);
@@ -780,7 +1063,7 @@ describe('retry triggers and lifecycle', () => {
         if (attempts === 1) {
           await new Promise<never>((_resolve, reject) => { rejectFirstAttempt = reject; });
         }
-        throw new Error('temporary outage');
+        throw new CloudGatewayError('network');
       },
     });
     const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
@@ -788,7 +1071,7 @@ describe('retry triggers and lifecycle', () => {
     const starting = engine.start();
     await vi.waitFor(() => expect(attempts).toBe(1));
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    rejectFirstAttempt?.(new Error('temporary outage'));
+    rejectFirstAttempt?.(new CloudGatewayError('network'));
     await settleIndexedDb();
     await starting;
     expect(attempts).toBe(1);

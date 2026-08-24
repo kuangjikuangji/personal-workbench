@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { WorkbenchDatabase } from './database';
 import type { Repositories } from './repositories';
 import type { SyncOperation } from '../sync/types';
-import { clearUserMirror, createSyncedRepositories } from './syncedRepositories';
+import {
+  clearUserMirror,
+  createRepositoryWriteLease,
+  createSyncedRepositories,
+  RepositoryWriteLeaseExpiredError,
+} from './syncedRepositories';
 
 const userId = 'user-1';
 const createdAt = '2026-01-01T00:00:00.000Z';
@@ -51,6 +56,94 @@ afterEach(async () => {
 });
 
 describe('synchronized repositories', () => {
+  test('uses one strictly monotonic mutation clock for rapid create, put, patch, and setting writes', async () => {
+    const db = createDatabase();
+    const lease = createRepositoryWriteLease(userId);
+    const repositories = createSyncedRepositories(
+      db,
+      userId,
+      lease,
+      () => new Date('2026-08-24T00:00:00.000Z'),
+    );
+
+    const created = await repositories.teachers.create({
+      name: '张老师', department: '', archivedAt: null,
+    });
+    const replaced = await repositories.teachers.put({ ...created, department: '计算机学院' });
+    const patched = await repositories.teachers.patch(created.id, { name: '李老师' });
+    const firstSetting = await repositories.settings.put({ key: 'theme', value: 'light' });
+    const secondSetting = await repositories.settings.put({
+      key: 'theme', value: 'dark', updatedAt: firstSetting.updatedAt,
+    });
+
+    expect([
+      created.updatedAt,
+      replaced.updatedAt,
+      patched.updatedAt,
+      firstSetting.updatedAt,
+      secondSetting.updatedAt,
+    ]).toEqual([
+      '2026-08-24T00:00:00.000Z',
+      '2026-08-24T00:00:00.001Z',
+      '2026-08-24T00:00:00.002Z',
+      '2026-08-24T00:00:00.003Z',
+      '2026-08-24T00:00:00.004Z',
+    ]);
+    expect((await db.syncOperations.orderBy('createdAt').toArray()).map(({ clientUpdatedAt }) => clientUpdatedAt))
+      .toEqual([
+        '2026-08-24T00:00:00.000Z',
+        '2026-08-24T00:00:00.001Z',
+        '2026-08-24T00:00:00.002Z',
+        '2026-08-24T00:00:00.003Z',
+        '2026-08-24T00:00:00.004Z',
+      ]);
+  });
+
+  test('rejects every mutation synchronously after its user-scoped write lease is revoked', async () => {
+    const db = createDatabase();
+    const lease = createRepositoryWriteLease(userId);
+    const repositories = createSyncedRepositories(db, userId, lease);
+    await db.teachers.add(teacher());
+    await db.settings.add({ key: 'theme', value: 'light', updatedAt });
+
+    lease.revoke();
+
+    const mutations = [
+      repositories.teachers.create({ name: '新教师', department: '', archivedAt: null }),
+      repositories.teachers.put(teacher({ name: '替换教师' })),
+      repositories.teachers.patch('teacher-1', { name: '修改教师' }),
+      repositories.teachers.delete('teacher-1'),
+      repositories.settings.put({ key: 'theme', value: 'dark' }),
+      repositories.settings.delete('theme'),
+      repositories.transaction(async () => { await db.teachers.clear(); }),
+    ];
+
+    for (const mutation of mutations) {
+      await expect(mutation).rejects.toEqual(new RepositoryWriteLeaseExpiredError(userId));
+    }
+    expect(await db.teachers.toArray()).toEqual([teacher()]);
+    expect(await db.settings.toArray()).toEqual([{ key: 'theme', value: 'light', updatedAt }]);
+    expect(await db.syncOperations.count()).toBe(0);
+  });
+
+  test('rolls back an in-flight mutation when its lease expires before the write completes', async () => {
+    const db = createDatabase();
+    const lease = createRepositoryWriteLease(userId);
+    const repositories = createSyncedRepositories(db, userId, lease);
+    let releaseLookup: ((value: ReturnType<typeof teacher>) => void) | undefined;
+    const lookup = new Promise<ReturnType<typeof teacher>>((resolve) => { releaseLookup = resolve; });
+    vi.spyOn(db.teachers, 'get').mockReturnValueOnce(lookup as never);
+
+    const patching = repositories.teachers.patch('teacher-1', { name: '不应保存' });
+    await vi.waitFor(() => expect(db.teachers.get).toHaveBeenCalled());
+    lease.revoke();
+    releaseLookup?.(teacher());
+
+    await expect(patching).rejects.toEqual(new RepositoryWriteLeaseExpiredError(userId));
+    expect(await db.teachers.count()).toBe(0);
+    expect(await db.syncOperations.count()).toBe(0);
+  });
+
   test('create writes the generated record and its upsert operation', async () => {
     const db = createDatabase();
     const repositories = createSyncedRepositories(db, userId);
@@ -85,13 +178,14 @@ describe('synchronized repositories', () => {
     const saved = await repositories.teachers.put(teacher({ department: '计算机学院' }));
 
     expect(await db.teachers.get('teacher-1')).toEqual(saved);
+    expect(saved.updatedAt.localeCompare(updatedAt)).toBeGreaterThan(0);
     expect(await db.syncOperations.toArray()).toEqual([
       expect.objectContaining({
         entityKind: 'teachers',
         entityId: 'teacher-1',
         type: 'upsert',
-        record: teacher({ department: '计算机学院' }),
-        clientUpdatedAt: updatedAt,
+        record: saved,
+        clientUpdatedAt: saved.updatedAt,
         localCreate: false,
       }),
     ]);

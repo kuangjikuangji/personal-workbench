@@ -17,6 +17,7 @@ type RealtimePayload = {
   commit_timestamp?: string;
 };
 type RealtimeHandler = (payload: RealtimePayload) => void;
+type QueryResult = { data: Record<string, unknown>[] | null; error: null };
 
 function createFakeClient(options: {
   rowsByTable?: Record<string, Record<string, unknown>[]>;
@@ -26,9 +27,15 @@ function createFakeClient(options: {
   rpcReject?: unknown;
   channelError?: unknown;
   removeReject?: unknown;
+  rpcHandler?: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ data: unknown; error: { message: string; status?: number; code?: string } | null }>;
 } = {}) {
   const requestedTables: string[] = [];
   const requestedUserIds: string[] = [];
+  const requestedOrders: Array<{ table: string; column: string }> = [];
+  const requestedRanges: Array<{ table: string; from: number; to: number }> = [];
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const changeRegistrations: Array<{ filter: string; table: string }> = [];
   let statusHandler: ((status: string) => void) | undefined;
@@ -49,17 +56,42 @@ function createFakeClient(options: {
 
   const client = {
     from: (table: string) => ({
-      select: () => ({
-        eq: async (_column: string, value: string) => {
+      select: () => {
+        let requestedUserId = '';
+        const result = (from?: number, to?: number) => {
           requestedTables.push(table);
-          requestedUserIds.push(value);
+          requestedUserIds.push(requestedUserId);
           if (options.queryReject) throw options.queryReject;
-          return { data: options.rowsByTable?.[table] ?? [], error: null };
-        },
-      }),
+          const rows = options.rowsByTable?.[table] ?? [];
+          return {
+            data: from === undefined || to === undefined ? rows : rows.slice(from, to + 1),
+            error: null,
+          };
+        };
+        const query = {
+          eq: (_column: string, value: string) => {
+            requestedUserId = value;
+            return query;
+          },
+          order: (column: string) => {
+            requestedOrders.push({ table, column });
+            return query;
+          },
+          range: async (from: number, to: number) => {
+            requestedRanges.push({ table, from, to });
+            return result(from, to);
+          },
+          then: <TResult1 = QueryResult, TResult2 = never>(
+            onfulfilled?: ((value: QueryResult) => TResult1 | PromiseLike<TResult1>) | null,
+            onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+          ) => Promise.resolve(result()).then(onfulfilled, onrejected),
+        };
+        return query;
+      },
     }),
     rpc: async (name: string, args: Record<string, unknown>) => {
       rpcCalls.push({ name, args });
+      if (options.rpcHandler) return options.rpcHandler(name, args);
       if (options.rpcReject) throw options.rpcReject;
       const record = args.p_record as Record<string, unknown>;
       return {
@@ -91,6 +123,8 @@ function createFakeClient(options: {
     client: client as unknown as SupabaseClient<Database>,
     requestedTables,
     requestedUserIds,
+    requestedOrders,
+    requestedRanges,
     rpcCalls,
     changeRegistrations,
     emitChange: (table: string, row: Record<string, unknown>) => handlers.get(table)?.({ eventType: 'UPDATE', new: row, old: {} }),
@@ -163,6 +197,11 @@ describe('cloud gateway', () => {
 
     expect(fake.requestedTables).toEqual(entityKinds);
     expect(fake.requestedUserIds).toEqual(entityKinds.map(() => userId));
+    expect(fake.requestedOrders).toEqual(entityKinds.map((table) => ({
+      table,
+      column: table === 'app_settings' ? 'key' : 'id',
+    })));
+    expect(fake.requestedRanges).toEqual(entityKinds.map((table) => ({ table, from: 0, to: 999 })));
     expect(changes).toEqual([{
       entityKind: 'todos',
       entityId: 'todo-1',
@@ -185,6 +224,44 @@ describe('cloud gateway', () => {
       clientUpdatedAt: timestamp,
       serverUpdatedAt: serverTimestamp,
     }]);
+  });
+
+  test('pullAll follows deterministic identity-ordered pages until every table is exhausted', async () => {
+    const rows = Array.from({ length: 5 }, (_, index) => ({
+      id: `todo-${index + 1}`,
+      user_id: userId,
+      created_at: timestamp,
+      updated_at: timestamp,
+      deleted_at: null,
+      server_updated_at: serverTimestamp,
+      title: `Todo ${index + 1}`,
+      description: '',
+      role: 'personal',
+      start_at: null,
+      end_at: null,
+      remind_at: null,
+      priority: 'normal',
+      status: 'open',
+      source_type: null,
+      source_id: null,
+    }));
+    const fake = createFakeClient({ rowsByTable: { todos: rows } });
+
+    const changes = await createCloudGateway(fake.client, userId, { pageSize: 2 }).pullAll();
+
+    expect(changes.map(({ entityId }) => entityId)).toEqual([
+      'todo-1', 'todo-2', 'todo-3', 'todo-4', 'todo-5',
+    ]);
+    expect(fake.requestedRanges.filter(({ table }) => table === 'todos')).toEqual([
+      { table: 'todos', from: 0, to: 1 },
+      { table: 'todos', from: 2, to: 3 },
+      { table: 'todos', from: 4, to: 5 },
+    ]);
+    expect(fake.requestedOrders.filter(({ table }) => table === 'todos')).toEqual([
+      { table: 'todos', column: 'id' },
+      { table: 'todos', column: 'id' },
+      { table: 'todos', column: 'id' },
+    ]);
   });
 
   test('apply serializes an upsert and sends its client timestamp to the conflict-safe RPC', async () => {
@@ -213,6 +290,7 @@ describe('cloud gateway', () => {
         },
         p_client_updated_at: timestamp,
         p_deleted_at: null,
+        p_expected_user_id: userId,
       },
     }]);
     expect(result.applied).toBe(true);
@@ -260,9 +338,48 @@ describe('cloud gateway', () => {
     }));
 
     expect(fake.rpcCalls.map(({ args }) => args)).toEqual([
-      { p_table: 'todos', p_record: { id: 'todo-1' }, p_client_updated_at: timestamp, p_deleted_at: timestamp },
-      { p_table: 'app_settings', p_record: { key: 'theme' }, p_client_updated_at: timestamp, p_deleted_at: timestamp },
+      {
+        p_table: 'todos', p_record: { id: 'todo-1' }, p_client_updated_at: timestamp,
+        p_deleted_at: timestamp, p_expected_user_id: userId,
+      },
+      {
+        p_table: 'app_settings', p_record: { key: 'theme' }, p_client_updated_at: timestamp,
+        p_deleted_at: timestamp, p_expected_user_id: userId,
+      },
     ]);
+  });
+
+  test('rejects an operation owned by another session before issuing an RPC', async () => {
+    const fake = createFakeClient();
+
+    await expect(createCloudGateway(fake.client, userId).apply(todoOperation({ userId: 'user-2' })))
+      .rejects.toEqual(new CloudGatewayError('auth'));
+
+    expect(fake.rpcCalls).toEqual([]);
+  });
+
+  test('binds an in-flight request to the gateway user when the mutable client session changes', async () => {
+    let currentSessionUserId = userId;
+    let releaseRequest: (() => void) | undefined;
+    let requestStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+    const fake = createFakeClient({
+      rpcHandler: async (_name, args) => {
+        requestStarted?.();
+        await new Promise<void>((resolve) => { releaseRequest = resolve; });
+        return currentSessionUserId === args.p_expected_user_id
+          ? { data: null, error: null }
+          : { data: null, error: { message: 'expected_user_mismatch', code: '42501' } };
+      },
+    });
+
+    const applying = createCloudGateway(fake.client, userId).apply(todoOperation());
+    await started;
+    currentSessionUserId = 'user-2';
+    releaseRequest?.();
+
+    await expect(applying).rejects.toEqual(new CloudGatewayError('auth'));
+    expect(fake.rpcCalls[0]?.args.p_expected_user_id).toBe(userId);
   });
 
   test('subscribes to every table with the current-user filter, normalizes events, and removes the channel', async () => {

@@ -7,7 +7,7 @@ import { createSyncedRepositories } from '../db/syncedRepositories';
 import type { AuthBackend } from '../features/auth/authTypes';
 import type { Database } from '../lib/supabase/database.types';
 import type { SyncProviderDependencies } from '../sync/SyncProvider';
-import type { EntityKind } from '../sync/types';
+import type { RemoteChangeListener } from '../sync/syncEngine';
 import { App } from './App';
 
 test('fails closed when cloud authentication is not configured', async () => {
@@ -43,7 +43,9 @@ test('uses injected synchronization dependencies with an injected authentication
       apply: async () => { throw new Error('unused gateway apply'); },
       subscribe: () => ({ ready: Promise.resolve(), unsubscribe: async () => undefined }),
     })),
-    createRepositories: vi.fn((db, userId) => createSyncedRepositories(db, userId)),
+    createRepositories: vi.fn((db, userId, lease) => (
+      createSyncedRepositories(db, userId, lease)
+    )),
     createEngine: vi.fn(() => ({ start, retry: async () => true, stop: async () => undefined })),
   };
 
@@ -74,7 +76,7 @@ test('refetches an active feature query after the sync engine accepts a realtime
     completePasswordChange: async () => undefined,
   };
   const database = new WorkbenchDatabase(`app-realtime-${crypto.randomUUID()}`);
-  let onRemoteChange: ((entityKind: EntityKind) => void) | undefined;
+  let onRemoteChange: RemoteChangeListener | undefined;
   const dependencies: SyncProviderDependencies = {
     client: {} as SupabaseClient<Database>,
     database,
@@ -83,7 +85,9 @@ test('refetches an active feature query after the sync engine accepts a realtime
       apply: async () => { throw new Error('unused gateway apply'); },
       subscribe: () => ({ ready: Promise.resolve(), unsubscribe: async () => undefined }),
     })),
-    createRepositories: vi.fn((db, userId) => createSyncedRepositories(db, userId)),
+    createRepositories: vi.fn((db, userId, lease) => (
+      createSyncedRepositories(db, userId, lease)
+    )),
     createEngine: vi.fn((options) => {
       onRemoteChange = options.onRemoteChange;
       return { start: async () => true, retry: async () => true, stop: async () => undefined };
@@ -111,7 +115,7 @@ test('refetches an active feature query after the sync engine accepts a realtime
     });
 
     expect(onRemoteChange).toBeTypeOf('function');
-    await act(async () => { onRemoteChange?.('todos'); });
+    await act(async () => { onRemoteChange?.(new Set(['todos'])); });
     expect(await screen.findByText('跨端实时待办')).toBeInTheDocument();
   } finally {
     view.unmount();

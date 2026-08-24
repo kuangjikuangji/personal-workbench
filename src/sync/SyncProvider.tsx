@@ -12,7 +12,11 @@ import {
 } from 'react';
 import type { WorkbenchDatabase } from '../db/database';
 import type { Repositories } from '../db/repositories';
-import { clearUserMirror, createSyncedRepositories } from '../db/syncedRepositories';
+import {
+  clearUserMirror,
+  createRepositoryWriteLease,
+  createSyncedRepositories,
+} from '../db/syncedRepositories';
 import { useAuth } from '../features/auth/AuthProvider';
 import type { AuthIdentity } from '../features/auth/authTypes';
 import type { Database } from '../lib/supabase/database.types';
@@ -30,6 +34,7 @@ export interface SyncProviderDependencies {
   database: WorkbenchDatabase;
   createGateway?: typeof createCloudGateway;
   createRepositories?: typeof createSyncedRepositories;
+  createWriteLease?: typeof createRepositoryWriteLease;
   createEngine?: typeof createSyncEngine;
   clearMirror?: typeof clearUserMirror;
   online?: () => boolean;
@@ -69,22 +74,32 @@ export function SyncProvider({
     database,
     createGateway: buildGateway = createCloudGateway,
     createRepositories: buildRepositories = createSyncedRepositories,
+    createWriteLease: buildWriteLease = createRepositoryWriteLease,
     createEngine: buildEngine = createSyncEngine,
     clearMirror = clearUserMirror,
     online = browserOnline,
   } = dependencies;
-  const repositories = useMemo(
-    () => buildRepositories(database, userId),
-    [buildRepositories, database, userId],
-  );
   const engineRef = useRef<SyncEngine | null>(null);
+  const signOutRef = useRef(auth.signOut);
+  signOutRef.current = auth.signOut;
   const [startup, setStartup] = useState<{
     userId: string;
     status: 'loading' | 'error' | 'ready';
   }>({ userId, status: 'loading' });
   const [startupAttempt, setStartupAttempt] = useState(0);
+  const writeLease = useMemo(
+    () => buildWriteLease(userId),
+    [buildWriteLease, startupAttempt, userId],
+  );
+  const repositories = useMemo(
+    () => buildRepositories(database, userId, writeLease),
+    [buildRepositories, database, userId, writeLease],
+  );
   const retry = useCallback(async () => {
     await engineRef.current?.retry();
+  }, []);
+  const handleAuthError = useCallback(() => {
+    void signOutRef.current();
   }, []);
   const context = useMemo(() => ({ retry }), [retry]);
 
@@ -94,7 +109,14 @@ export function SyncProvider({
     let stopPromise: Promise<void> | null = null;
     let cleanupPromise: Promise<void> | null = null;
     const gateway = buildGateway(client, userId);
-    const engine = buildEngine({ db: database, gateway, userId, online, onRemoteChange });
+    const engine = buildEngine({
+      db: database,
+      gateway,
+      userId,
+      online,
+      onRemoteChange,
+      onAuthError: handleAuthError,
+    });
     engineRef.current = engine;
     resetSyncState();
 
@@ -103,6 +125,8 @@ export function SyncProvider({
       return stopPromise;
     };
     const cleanup = () => {
+      writeLease.revoke();
+      if (active) setStartup({ userId, status: 'loading' });
       cleanupPromise ??= (async () => {
         await stop().catch(() => undefined);
         await clearMirror(database, userId);
@@ -133,6 +157,7 @@ export function SyncProvider({
 
     return () => {
       active = false;
+      writeLease.revoke();
       unregisterCleanup();
       if (engineRef.current === engine) engineRef.current = null;
       void stop().catch(() => undefined);
@@ -141,13 +166,16 @@ export function SyncProvider({
     auth.registerSignOutCleanup,
     buildEngine,
     buildGateway,
+    buildWriteLease,
     clearMirror,
     client,
     database,
+    handleAuthError,
     online,
     onRemoteChange,
     startupAttempt,
     userId,
+    writeLease,
   ]);
 
   if (startup.userId !== userId || startup.status === 'loading') {

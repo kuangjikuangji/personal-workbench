@@ -168,6 +168,7 @@ export function AuthProvider({
     }
 
     profileCache?.remove(sourceUserId);
+    setState({ status: 'loading' });
     const barrier: UserTransitionBarrier = {
       sourceUserId,
       targetUserId,
@@ -241,15 +242,23 @@ export function AuthProvider({
     let profile;
     try {
       profile = await backend.getProfile(userId);
-    } catch {
+    } catch (error) {
       if (!isCurrentTransition(epoch)) return;
-      const cachedProfile = !online() && hasUnexpiredSession(session)
+      const cachedProfile = !requestStartedOnline && hasUnexpiredSession(session)
         ? profileCache?.read(userId) ?? null
         : null;
       if (cachedProfile?.isActive && !cachedProfile.mustChangePassword) {
         activeUserId.current = userId;
         if (barrier && userTransitionBarrier.current === barrier) userTransitionBarrier.current = null;
         setState({ status: 'authenticated', identity: { session, profile: cachedProfile } });
+        return;
+      }
+
+      if (requestStartedOnline && !(error instanceof Error && error.message === 'invalid_profile')) {
+        // A transport outage cannot prove the session is unauthorized. Keep
+        // the protected tree hidden while preserving its mirror and queue for
+        // a later same-session validation event.
+        setState({ status: 'loading' });
         return;
       }
 
@@ -352,6 +361,7 @@ export function AuthProvider({
 
       beginTransition();
       explicitSignOutInProgress.current = true;
+      setState({ status: 'loading' });
       setPending(true);
       const operation = (async () => {
         let failed = false;

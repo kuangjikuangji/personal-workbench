@@ -46,8 +46,9 @@ export type CloudSubscription = {
   unsubscribe: () => Promise<void>;
 };
 
-type RemoteError = { code?: unknown; status?: unknown };
+type RemoteError = { code?: unknown; message?: unknown; status?: unknown };
 type QueryResult = { data: Record<string, unknown>[] | null; error: RemoteError | null };
+type CloudGatewayOptions = { pageSize?: number };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -55,9 +56,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function classifyError(error: unknown): CloudGatewayErrorKind {
   const remoteError: RemoteError = isRecord(error)
-    ? { status: error.status, code: error.code }
+    ? { status: error.status, code: error.code, message: error.message }
     : {};
 
+  if (remoteError.code === '42501' && remoteError.message === 'expected_user_mismatch') return 'auth';
   if (remoteError.status === 401 || remoteError.code === 'PGRST301') return 'auth';
   if (remoteError.status === 403 || remoteError.code === '42501') return 'permission';
   if (
@@ -104,8 +106,16 @@ function rowsFor(
   client: SupabaseClient<Database>,
   entityKind: EntityKind,
   userId: string,
+  from: number,
+  to: number,
 ): Promise<QueryResult> {
-  return client.from(entityKind).select('*').eq('user_id', userId) as unknown as Promise<QueryResult>;
+  const identityColumn = entityKind === 'app_settings' ? 'key' : 'id';
+  return client
+    .from(entityKind)
+    .select('*')
+    .eq('user_id', userId)
+    .order(identityColumn, { ascending: true })
+    .range(from, to) as unknown as Promise<QueryResult>;
 }
 
 function normalizeApplyResult(entityKind: EntityKind, data: unknown): CloudApplyResult {
@@ -116,16 +126,35 @@ function normalizeApplyResult(entityKind: EntityKind, data: unknown): CloudApply
   return { applied: data.applied, change: normalizeChange(entityKind, data.row) };
 }
 
-export function createCloudGateway(client: SupabaseClient<Database>, userId: string): CloudGateway {
+export function createCloudGateway(
+  client: SupabaseClient<Database>,
+  userId: string,
+  { pageSize = 1_000 }: CloudGatewayOptions = {},
+): CloudGateway {
+  if (!Number.isInteger(pageSize) || pageSize <= 0) throw new CloudGatewayError('validation');
   const entityKinds = Object.keys(entityRegistry) as EntityKind[];
 
   return {
     async pullAll() {
       try {
         const results = await Promise.all(entityKinds.map(async (entityKind) => {
-          const { data, error } = await rowsFor(client, entityKind, userId);
-          if (error) throwGatewayError(error);
-          return (data ?? []).map((row) => normalizeChange(entityKind, row));
+          const changes: CloudChange[] = [];
+          let from = 0;
+          while (true) {
+            const { data, error } = await rowsFor(
+              client,
+              entityKind,
+              userId,
+              from,
+              from + pageSize - 1,
+            );
+            if (error) throwGatewayError(error);
+            const page = data ?? [];
+            changes.push(...page.map((row) => normalizeChange(entityKind, row)));
+            if (page.length < pageSize) break;
+            from += pageSize;
+          }
+          return changes;
         }));
 
         return results.flat();
@@ -136,11 +165,13 @@ export function createCloudGateway(client: SupabaseClient<Database>, userId: str
 
     async apply(operation) {
       try {
+        if (operation.userId !== userId) throw new CloudGatewayError('auth');
         const { data, error } = await client.rpc('apply_workbench_change', {
           p_table: operation.entityKind,
           p_record: operationRecord(operation) as unknown as Json,
           p_client_updated_at: operation.clientUpdatedAt,
           p_deleted_at: operation.type === 'delete' ? operation.clientUpdatedAt : null,
+          p_expected_user_id: userId,
         });
         if (error) throwGatewayError(error);
         return normalizeApplyResult(operation.entityKind, data);

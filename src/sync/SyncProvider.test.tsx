@@ -4,7 +4,12 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { afterEach, expect, test, vi } from 'vitest';
 import { App } from '../app/App';
 import { WorkbenchDatabase } from '../db/database';
-import { clearUserMirror, createSyncedRepositories } from '../db/syncedRepositories';
+import type { Repositories } from '../db/repositories';
+import {
+  clearUserMirror,
+  createSyncedRepositories,
+  RepositoryWriteLeaseExpiredError,
+} from '../db/syncedRepositories';
 import { AuthGate } from '../features/auth/AuthGate';
 import { AuthProvider, useAuth } from '../features/auth/AuthProvider';
 import type { AuthBackend, AuthIdentity, Profile } from '../features/auth/authTypes';
@@ -81,7 +86,9 @@ function dependencies(
     client,
     database,
     createGateway: vi.fn(() => gateway()),
-    createRepositories: vi.fn((db, scopedUserId) => createSyncedRepositories(db, scopedUserId)),
+    createRepositories: vi.fn((db, scopedUserId, lease) => (
+      createSyncedRepositories(db, scopedUserId, lease)
+    )),
     createEngine: vi.fn(() => syncEngine),
     ...overrides,
   };
@@ -164,7 +171,11 @@ test('creates one user-scoped repository and engine and preserves them across re
   await act(async () => undefined);
 
   expect(syncDependencies.createRepositories).toHaveBeenCalledTimes(1);
-  expect(syncDependencies.createRepositories).toHaveBeenCalledWith(database, userId);
+  expect(syncDependencies.createRepositories).toHaveBeenCalledWith(
+    database,
+    userId,
+    expect.any(Object),
+  );
   expect(syncDependencies.createGateway).toHaveBeenCalledTimes(1);
   expect(syncDependencies.createGateway).toHaveBeenCalledWith(client, userId);
   expect(syncDependencies.createEngine).toHaveBeenCalledTimes(1);
@@ -174,6 +185,37 @@ test('creates one user-scoped repository and engine and preserves them across re
     userId,
   }));
   expect(syncEngine.start).toHaveBeenCalledTimes(1);
+});
+
+test('routes an engine authentication failure through controller-owned sign-out cleanup', async () => {
+  const database = createDatabase();
+  const syncEngine = engine();
+  let onAuthError: (() => void) | undefined;
+  const createEngine = vi.fn((options: Parameters<NonNullable<
+    SyncProviderDependencies['createEngine']
+  >>[0]) => {
+    onAuthError = options.onAuthError;
+    return syncEngine;
+  });
+  const signOut = vi.fn(async () => undefined);
+  const backend = authBackend({ getSession: async () => session, signOut });
+
+  render(
+    <App
+      authBackend={backend}
+      syncDependencies={dependencies(database, syncEngine, { createEngine })}
+    />,
+  );
+
+  expect(await screen.findByRole('navigation', { name: '主导航' })).toBeInTheDocument();
+  expect(onAuthError).toBeTypeOf('function');
+  act(() => { onAuthError?.(); });
+
+  expect(screen.getByRole('status')).toHaveTextContent('正在验证登录状态');
+  expect(screen.queryByRole('navigation', { name: '主导航' })).not.toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument();
+  expect(syncEngine.stop).toHaveBeenCalledTimes(1);
+  expect(signOut).toHaveBeenCalledTimes(1);
 });
 
 test('gates business content on the initial cloud load and exposes store state with retry', async () => {
@@ -195,9 +237,9 @@ test('gates business content on the initial cloud load and exposes store state w
 
   expect(screen.getByRole('status')).toHaveTextContent('正在加载云端数据');
   expect(screen.queryByText('business content')).not.toBeInTheDocument();
-  setSyncState({ status: 'syncing', pendingCount: 2, message: null });
   finishInitialLoad?.();
   expect(await screen.findByText('business content')).toBeInTheDocument();
+  act(() => { setSyncState({ status: 'syncing', pendingCount: 2, message: null }); });
   expect(screen.getByText('syncing:2')).toBeInTheDocument();
 
   await userEvent.setup().click(screen.getByRole('button', { name: 'retry sync' }));
@@ -427,7 +469,8 @@ test('shares one A-to-B cleanup barrier across repeated B session events before 
   expect(clearMirror).toHaveBeenCalledWith(database, userId);
   expect(secondEngine.start).not.toHaveBeenCalled();
   expect(createEngine).toHaveBeenCalledTimes(1);
-  expect(screen.getByLabelText('当前账号')).toHaveTextContent('zhoujingjing');
+  expect(screen.getByRole('status')).toHaveTextContent('正在验证登录状态');
+  expect(screen.queryByLabelText('当前账号')).not.toBeInTheDocument();
 
   await act(async () => {
     finishCleanup?.();
@@ -490,6 +533,7 @@ test('awaits engine stop and current-user mirror cleanup before revealing anonym
   });
   const syncDependencies = dependencies(database, syncEngine);
   let emitSession: ((nextSession: Session | null) => void) | undefined;
+  let activeRepositories: Repositories | undefined;
   const backend = authBackend({
     getSession: async () => session,
     subscribe: (callback) => {
@@ -512,7 +556,10 @@ test('awaits engine stop and current-user mirror cleanup before revealing anonym
             dependencies={syncDependencies}
             identity={authenticatedIdentity}
           >
-            {() => <><div>protected workbench</div><SignOutButton /></>}
+            {(repositories) => {
+              activeRepositories = repositories;
+              return <><div>protected workbench</div><SignOutButton /></>;
+            }}
           </SyncProvider>
         )}
       </AuthGate>
@@ -521,9 +568,15 @@ test('awaits engine stop and current-user mirror cleanup before revealing anonym
 
   await userEvent.setup().click(await screen.findByRole('button', { name: 'end session' }));
   await waitFor(() => expect(events).toEqual(['stop requested']));
-  expect(screen.getByText('protected workbench')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('正在验证登录状态');
+  expect(screen.queryByText('protected workbench')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '登录' })).not.toBeInTheDocument();
   expect(await database.teachers.count()).toBe(1);
+  expect(activeRepositories).toBeDefined();
+  await expect(activeRepositories!.teachers.create({
+    name: '不应写入', department: '', archivedAt: null,
+  })).rejects.toEqual(new RepositoryWriteLeaseExpiredError(userId));
+  expect(await database.syncOperations.where('userId').equals(userId).count()).toBe(1);
   act(() => { emitSession?.(session); });
   await act(async () => undefined);
   expect(events).toEqual(['stop requested']);

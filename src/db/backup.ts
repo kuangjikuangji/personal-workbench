@@ -188,33 +188,37 @@ async function clearRepository(repository: { list(): Promise<Array<{ id?: string
 export async function restoreBackup(backup: WorkbenchBackupV1, repositories: Repositories): Promise<void> {
   const value = validateBackup(backup);
   await repositories.transaction(async () => {
-    await clearRepository(repositories.todos);
-    await clearRepository(repositories.semesters);
-    await clearRepository(repositories.courses);
-    await clearRepository(repositories.teachers);
+    // Queue tombstones from dependants to parents so a future hard-delete
+    // implementation can replay the same stream without violating ownership FKs.
     await clearRepository(repositories.teacherYearSummaries);
     await clearRepository(repositories.teacherRecords);
     await clearRepository(repositories.mentorships);
-    await clearRepository(repositories.researchItems);
-    await clearRepository(repositories.learningMethods);
-    await clearRepository(repositories.ideas);
-    await clearRepository(repositories.lessonPlans);
-    await clearRepository(repositories.students);
     await clearRepository(repositories.studentRecords);
+    await clearRepository(repositories.lessonPlans);
+    await clearRepository(repositories.courses);
+    await clearRepository(repositories.todos);
+    await clearRepository(repositories.researchItems);
+    await clearRepository(repositories.ideas);
+    await clearRepository(repositories.teachers);
+    await clearRepository(repositories.students);
+    await clearRepository(repositories.semesters);
+    await clearRepository(repositories.learningMethods);
     await clearRepository(repositories.settings);
 
-    for (const item of value.tables.todos) await repositories.todos.put(item);
+    // Every put receives a new repository-managed mutation timestamp. Parents
+    // precede every dependent row so the outbound queue is safe to replay.
+    for (const item of value.tables.ideas) await repositories.ideas.put(item);
     for (const item of value.tables.semesters) await repositories.semesters.put(item);
-    for (const item of value.tables.courses) await repositories.courses.put(item);
     for (const item of value.tables.teachers) await repositories.teachers.put(item);
+    for (const item of value.tables.students) await repositories.students.put(item);
+    for (const item of value.tables.learningMethods) await repositories.learningMethods.put(item);
+    for (const item of value.tables.courses) await repositories.courses.put(item);
+    for (const item of value.tables.todos) await repositories.todos.put(item);
+    for (const item of value.tables.researchItems) await repositories.researchItems.put(item);
     for (const item of value.tables.teacherYearSummaries) await repositories.teacherYearSummaries.put(item);
     for (const item of value.tables.teacherRecords) await repositories.teacherRecords.put(item);
     for (const item of value.tables.mentorships) await repositories.mentorships.put(item);
-    for (const item of value.tables.researchItems) await repositories.researchItems.put(item);
-    for (const item of value.tables.learningMethods) await repositories.learningMethods.put(item);
-    for (const item of value.tables.ideas) await repositories.ideas.put(item);
     for (const item of value.tables.lessonPlans) await repositories.lessonPlans.put(item);
-    for (const item of value.tables.students) await repositories.students.put(item);
     for (const item of value.tables.studentRecords) await repositories.studentRecords.put(item);
     for (const item of value.tables.settings) await repositories.settings.put(item);
   });

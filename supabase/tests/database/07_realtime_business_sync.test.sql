@@ -1,6 +1,6 @@
 begin;
 
-select plan(52);
+select plan(57);
 
 select is(
   (
@@ -129,7 +129,7 @@ select is(
 );
 select ok(
   to_regprocedure(
-    'public.apply_workbench_change(text,jsonb,timestamp with time zone,jsonb)'
+    'public.apply_workbench_change(text,jsonb,timestamp with time zone,jsonb,uuid)'
   ) is not null,
   'the workbench change RPC exists with its stable signature'
 );
@@ -138,7 +138,7 @@ select is(
     select routine.prosecdef
     from pg_proc routine
     where routine.oid = to_regprocedure(
-      'public.apply_workbench_change(text,jsonb,timestamp with time zone,jsonb)'
+      'public.apply_workbench_change(text,jsonb,timestamp with time zone,jsonb,uuid)'
     )
   ),
   false,
@@ -316,12 +316,16 @@ begin
       when 'newer' then fixture.newer_record
       else null
     end;
+    if p_deleted_at is not null and jsonb_typeof(p_deleted_at) <> 'null' then
+      payload := jsonb_build_object('id', payload -> 'id');
+    end if;
     begin
       result := public.apply_workbench_change(
         fixture.table_name,
         payload,
         p_client_updated_at,
-        p_deleted_at
+        p_deleted_at,
+        auth.uid()
       );
       if (result ->> 'applied')::boolean is distinct from p_expected_applied then
         mismatches := array_append(mismatches, fixture.table_name);
@@ -409,7 +413,7 @@ set search_path = ''
 as $$
 begin
   perform public.apply_workbench_change(
-    p_table, p_record, p_client_updated_at, p_deleted_at
+    p_table, p_record, p_client_updated_at, p_deleted_at, auth.uid()
   );
   return null;
 exception
@@ -505,7 +509,8 @@ select lives_ok(
        'app_settings',
        '{"user_id":"00000000-0000-4000-8000-000000000070","key":"theme","value":{"mode":"user-b"}}'::jsonb,
        '2030-01-01 00:02:00+00',
-       null
+       null,
+       '00000000-0000-4000-8000-000000000071'
      ) $$,
   'the RPC ignores a spoofed user_id rather than targeting user A'
 );
@@ -513,6 +518,18 @@ select is(
   (select value ->> 'mode' from public.app_settings where key = 'theme'),
   'user-b',
   'a spoofed user_id is replaced with user B identity'
+);
+select throws_ok(
+  $$ select public.apply_workbench_change(
+       'app_settings',
+       '{"key":"theme","value":{"mode":"stale-user-a-engine"}}'::jsonb,
+       '2030-01-01 00:02:30+00',
+       null,
+       '00000000-0000-4000-8000-000000000070'
+     ) $$,
+  '42501',
+  'expected_user_mismatch',
+  'an engine created for user A cannot write after the session changes to user B'
 );
 
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000070', true);
@@ -528,11 +545,30 @@ select is(
       'app_settings',
       '{"key":"theme","value":{"mode":"newer"}}'::jsonb,
       '2030-01-01 00:03:00+00',
-      'null'::jsonb
+      'null'::jsonb,
+      '00000000-0000-4000-8000-000000000070'
     ) ->> 'applied'
   )::boolean,
   true,
   'a newer setting update is applied'
+);
+select is(
+  (
+    public.apply_workbench_change(
+      'app_settings',
+      '{"key":"theme","value":{"mode":"equal-last-arrival"}}'::jsonb,
+      '2030-01-01 00:03:00+00',
+      null,
+      '00000000-0000-4000-8000-000000000070'
+    ) ->> 'applied'
+  )::boolean,
+  true,
+  'an equal-timestamp update is accepted as the last server arrival'
+);
+select is(
+  (select value ->> 'mode' from public.app_settings where key = 'theme'),
+  'equal-last-arrival',
+  'the last server arrival wins when client timestamps are equal'
 );
 select is(
   (select updated_at from public.app_settings where key = 'theme'),
@@ -550,7 +586,8 @@ select is(
       'app_settings',
       '{"key":"theme","value":{"mode":"older"}}'::jsonb,
       '2030-01-01 00:02:00+00',
-      null
+      null,
+      '00000000-0000-4000-8000-000000000070'
     ) ->> 'applied'
   )::boolean,
   false,
@@ -558,7 +595,7 @@ select is(
 );
 select is(
   (select value ->> 'mode' from public.app_settings where key = 'theme'),
-  'newer',
+  'equal-last-arrival',
   'the newer setting value survives an older update'
 );
 select is(
@@ -567,7 +604,8 @@ select is(
       'app_settings',
       '{"key":"theme","value":{"mode":"older-delete"}}'::jsonb,
       '2030-01-01 00:02:30+00',
-      to_jsonb('2030-01-01T00:02:30Z'::text)
+      to_jsonb('2030-01-01T00:02:30Z'::text),
+      '00000000-0000-4000-8000-000000000070'
     ) ->> 'applied'
   )::boolean,
   false,
@@ -579,7 +617,8 @@ select is(
       'app_settings',
       '{"key":"theme","value":{"mode":"resurrected"}}'::jsonb,
       '2030-01-01 00:04:00+00',
-      null
+      null,
+      '00000000-0000-4000-8000-000000000070'
     ) ->> 'applied'
   )::boolean,
   true,
@@ -594,9 +633,10 @@ select is(
   (
     public.apply_workbench_change(
       'app_settings',
-      '{"key":"theme","value":{"mode":"deleted"}}'::jsonb,
-      '2030-01-01 00:04:00+00',
-      to_jsonb('2030-01-01T00:05:00Z'::text)
+      '{"key":"theme"}'::jsonb,
+      '2030-01-01 00:05:00+00',
+      to_jsonb('2030-01-01T00:05:00Z'::text),
+      '00000000-0000-4000-8000-000000000070'
     ) ->> 'applied'
   )::boolean,
   true,
@@ -611,29 +651,32 @@ select is(
   (
     public.apply_workbench_change(
       'app_settings',
-      '{"key":"theme","value":{"mode":"deleted"}}'::jsonb,
-      '2030-01-01 00:04:00+00',
-      to_jsonb('2030-01-01T00:05:00Z'::text)
+      '{"key":"theme"}'::jsonb,
+      '2030-01-01 00:05:00+00',
+      to_jsonb('2030-01-01T00:05:00Z'::text),
+      '00000000-0000-4000-8000-000000000070'
     ) ->> 'applied'
   )::boolean,
-  false,
-  'retrying the winning deletion is idempotent'
+  true,
+  'an equal-timestamp tombstone is accepted as the last server arrival'
 );
 select is(
   (
     public.apply_workbench_change(
       'app_settings',
-      '{"key":"theme","value":{"mode":"deleted"}}'::jsonb,
-      '2030-01-01 00:04:00+00',
-      to_jsonb('2030-01-01T00:05:00Z'::text)
+      '{"key":"theme"}'::jsonb,
+      '2030-01-01 00:05:00+00',
+      to_jsonb('2030-01-01T00:05:00Z'::text),
+      '00000000-0000-4000-8000-000000000070'
     ) -> 'row' ->> 'key'
   ),
   'theme',
-  'an ignored retry returns the stored row'
+  'an equal-timestamp retry returns the authoritative row'
 );
 select throws_ok(
   $$ select public.apply_workbench_change(
-       'profiles', '{}'::jsonb, '2030-01-01 00:06:00+00', null
+       'profiles', '{}'::jsonb, '2030-01-01 00:06:00+00', null,
+       '00000000-0000-4000-8000-000000000070'
      ) $$,
   '22023',
   'table_not_allowed',
@@ -659,7 +702,8 @@ select is(
         "created_at":"2030-01-01T00:00:00Z"
       }'::jsonb,
       '2030-01-01 00:06:00+00',
-      null
+      null,
+      '00000000-0000-4000-8000-000000000070'
     ) ->> 'applied'
   )::boolean,
   true,
@@ -705,7 +749,8 @@ select is(
         "created_at":"2030-01-01T00:00:00Z"
       }'::jsonb,
       '2030-01-01 00:07:00+00',
-      null
+      null,
+      '00000000-0000-4000-8000-000000000071'
     ) ->> 'applied'
   )::boolean,
   false,
@@ -718,6 +763,24 @@ select is(
   (select title from public.todos where id = '70000000-0000-4000-8000-000000000001'),
   'synchronized todo',
   'the rejected cross-user RPC leaves user A todo unchanged'
+);
+select is(
+  (
+    public.apply_workbench_change(
+      'todos',
+      '{"id":"70000000-0000-4000-8000-000000000001"}'::jsonb,
+      '2030-01-01 00:08:00+00',
+      to_jsonb('2030-01-01T00:08:00Z'::text),
+      '00000000-0000-4000-8000-000000000070'
+    ) ->> 'applied'
+  )::boolean,
+  true,
+  'the exact gateway identity-only todo tombstone payload is applied'
+);
+select is(
+  (select deleted_at from public.todos where id = '70000000-0000-4000-8000-000000000001'),
+  '2030-01-01 00:08:00+00'::timestamptz,
+  'the identity-only todo tombstone retains the authoritative row'
 );
 
 select is(
@@ -811,7 +874,7 @@ select is(
 select is(
   pg_temp.apply_sync_fixture_stage(
     'newer',
-    '2030-02-01 00:04:00+00',
+    '2030-02-01 00:05:00+00',
     to_jsonb('2030-02-01T00:05:00Z'::text),
     true
   ),
