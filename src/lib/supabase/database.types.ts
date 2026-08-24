@@ -36,19 +36,25 @@ export type Database = {
     Tables: {
       app_settings: {
         Row: {
+          deleted_at: string | null
           key: string
+          server_updated_at: string
           updated_at: string
           user_id: string
           value: Json | null
         }
         Insert: {
+          deleted_at?: string | null
           key: string
+          server_updated_at?: string
           updated_at?: string
           user_id?: string
           value?: Json | null
         }
         Update: {
+          deleted_at?: string | null
           key?: string
+          server_updated_at?: string
           updated_at?: string
           user_id?: string
           value?: Json | null
@@ -58,6 +64,7 @@ export type Database = {
       courses: {
         Row: {
           created_at: string
+          deleted_at: string | null
           end_time: string
           end_week: number
           id: string
@@ -65,6 +72,7 @@ export type Database = {
           name: string
           notes: string
           semester_id: string
+          server_updated_at: string
           start_time: string
           start_week: number
           teacher: string
@@ -75,6 +83,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           end_time: string
           end_week: number
           id?: string
@@ -82,6 +91,7 @@ export type Database = {
           name: string
           notes: string
           semester_id: string
+          server_updated_at?: string
           start_time: string
           start_week: number
           teacher: string
@@ -92,6 +102,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           end_time?: string
           end_week?: number
           id?: string
@@ -99,6 +110,7 @@ export type Database = {
           name?: string
           notes?: string
           semester_id?: string
+          server_updated_at?: string
           start_time?: string
           start_week?: number
           teacher?: string
@@ -122,8 +134,10 @@ export type Database = {
           archived_at: string | null
           content: string
           created_at: string
+          deleted_at: string | null
           id: string
           pinned: boolean
+          server_updated_at: string
           tags: string[]
           updated_at: string
           user_id: string
@@ -132,8 +146,10 @@ export type Database = {
           archived_at?: string | null
           content: string
           created_at?: string
+          deleted_at?: string | null
           id?: string
           pinned: boolean
+          server_updated_at?: string
           tags: string[]
           updated_at?: string
           user_id?: string
@@ -142,8 +158,10 @@ export type Database = {
           archived_at?: string | null
           content?: string
           created_at?: string
+          deleted_at?: string | null
           id?: string
           pinned?: boolean
+          server_updated_at?: string
           tags?: string[]
           updated_at?: string
           user_id?: string
@@ -153,10 +171,12 @@ export type Database = {
       learning_methods: {
         Row: {
           created_at: string
+          deleted_at: string | null
           evaluation: string
           id: string
           name: string
           scenario: string
+          server_updated_at: string
           steps: string
           tags: string[]
           updated_at: string
@@ -164,10 +184,12 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           evaluation: string
           id?: string
           name: string
           scenario: string
+          server_updated_at?: string
           steps: string
           tags: string[]
           updated_at?: string
@@ -175,10 +197,12 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           evaluation?: string
           id?: string
           name?: string
           scenario?: string
+          server_updated_at?: string
           steps?: string
           tags?: string[]
           updated_at?: string
@@ -192,11 +216,13 @@ export type Database = {
           chapter: string
           course_id: string | null
           created_at: string
+          deleted_at: string | null
           id: string
           objectives: string
           outline: string
           planned_date: string | null
           resources: string
+          server_updated_at: string
           source_id: string | null
           source_type: string | null
           status: string
@@ -208,11 +234,13 @@ export type Database = {
           chapter: string
           course_id?: string | null
           created_at?: string
+          deleted_at?: string | null
           id?: string
           objectives: string
           outline: string
           planned_date?: string | null
           resources: string
+          server_updated_at?: string
           source_id?: string | null
           source_type?: string | null
           status: string
@@ -224,11 +252,13 @@ export type Database = {
           chapter?: string
           course_id?: string | null
           created_at?: string
+          deleted_at?: string | null
           id?: string
           objectives?: string
           outline?: string
           planned_date?: string | null
           resources?: string
+          server_updated_at?: string
           source_id?: string | null
           source_type?: string | null
           status?: string
@@ -256,10 +286,12 @@ export type Database = {
         Row: {
           academic_year: string
           created_at: string
+          deleted_at: string | null
           grade: string
           id: string
           major: string
           notes: string
+          server_updated_at: string
           status: string
           student_name: string
           teacher_id: string
@@ -270,10 +302,12 @@ export type Database = {
         Insert: {
           academic_year: string
           created_at?: string
+          deleted_at?: string | null
           grade: string
           id?: string
           major: string
           notes: string
+          server_updated_at?: string
           status: string
           student_name: string
           teacher_id: string
@@ -284,10 +318,12 @@ export type Database = {
         Update: {
           academic_year?: string
           created_at?: string
+          deleted_at?: string | null
           grade?: string
           id?: string
           major?: string
           notes?: string
+          server_updated_at?: string
           status?: string
           student_name?: string
           teacher_id?: string
@@ -340,9 +376,11 @@ export type Database = {
           abstract: string
           authors: string
           created_at: string
+          deleted_at: string | null
           id: string
           notes: string
           rating: number | null
+          server_updated_at: string
           source: string
           source_id: string | null
           source_type: string | null
@@ -358,9 +396,11 @@ export type Database = {
           abstract: string
           authors: string
           created_at?: string
+          deleted_at?: string | null
           id?: string
           notes: string
           rating?: number | null
+          server_updated_at?: string
           source: string
           source_id?: string | null
           source_type?: string | null
@@ -376,9 +416,11 @@ export type Database = {
           abstract?: string
           authors?: string
           created_at?: string
+          deleted_at?: string | null
           id?: string
           notes?: string
           rating?: number | null
+          server_updated_at?: string
           source?: string
           source_id?: string | null
           source_type?: string | null
@@ -403,10 +445,12 @@ export type Database = {
       semesters: {
         Row: {
           created_at: string
+          deleted_at: string | null
           end_date: string
           id: string
           is_active: boolean
           name: string
+          server_updated_at: string
           start_date: string
           total_weeks: number
           updated_at: string
@@ -414,10 +458,12 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           end_date: string
           id?: string
           is_active: boolean
           name: string
+          server_updated_at?: string
           start_date: string
           total_weeks: number
           updated_at?: string
@@ -425,10 +471,12 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           end_date?: string
           id?: string
           is_active?: boolean
           name?: string
+          server_updated_at?: string
           start_date?: string
           total_weeks?: number
           updated_at?: string
@@ -442,9 +490,11 @@ export type Database = {
           content: string
           created_at: string
           date: string
+          deleted_at: string | null
           follow_up: string
           id: string
           rating: string
+          server_updated_at: string
           student_id: string
           tags: string[]
           updated_at: string
@@ -455,9 +505,11 @@ export type Database = {
           content: string
           created_at?: string
           date: string
+          deleted_at?: string | null
           follow_up: string
           id?: string
           rating: string
+          server_updated_at?: string
           student_id: string
           tags: string[]
           updated_at?: string
@@ -468,9 +520,11 @@ export type Database = {
           content?: string
           created_at?: string
           date?: string
+          deleted_at?: string | null
           follow_up?: string
           id?: string
           rating?: string
+          server_updated_at?: string
           student_id?: string
           tags?: string[]
           updated_at?: string
@@ -492,10 +546,12 @@ export type Database = {
           cohort: string
           contact: string
           created_at: string
+          deleted_at: string | null
           id: string
           name: string
           notes: string
           program: string
+          server_updated_at: string
           updated_at: string
           user_id: string
         }
@@ -504,10 +560,12 @@ export type Database = {
           cohort: string
           contact: string
           created_at?: string
+          deleted_at?: string | null
           id?: string
           name: string
           notes: string
           program: string
+          server_updated_at?: string
           updated_at?: string
           user_id?: string
         }
@@ -516,10 +574,12 @@ export type Database = {
           cohort?: string
           contact?: string
           created_at?: string
+          deleted_at?: string | null
           id?: string
           name?: string
           notes?: string
           program?: string
+          server_updated_at?: string
           updated_at?: string
           user_id?: string
         }
@@ -530,8 +590,10 @@ export type Database = {
           content: string
           created_at: string
           date: string
+          deleted_at: string | null
           id: string
           notes: string
+          server_updated_at: string
           status: string
           teacher_id: string
           title: string
@@ -544,8 +606,10 @@ export type Database = {
           content: string
           created_at?: string
           date: string
+          deleted_at?: string | null
           id?: string
           notes: string
+          server_updated_at?: string
           status: string
           teacher_id: string
           title: string
@@ -558,8 +622,10 @@ export type Database = {
           content?: string
           created_at?: string
           date?: string
+          deleted_at?: string | null
           id?: string
           notes?: string
+          server_updated_at?: string
           status?: string
           teacher_id?: string
           title?: string
@@ -581,7 +647,9 @@ export type Database = {
       teacher_year_summaries: {
         Row: {
           created_at: string
+          deleted_at: string | null
           id: string
+          server_updated_at: string
           state: string
           teacher_id: string
           updated_at: string
@@ -590,7 +658,9 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           id?: string
+          server_updated_at?: string
           state: string
           teacher_id: string
           updated_at?: string
@@ -599,7 +669,9 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           id?: string
+          server_updated_at?: string
           state?: string
           teacher_id?: string
           updated_at?: string
@@ -620,27 +692,33 @@ export type Database = {
         Row: {
           archived_at: string | null
           created_at: string
+          deleted_at: string | null
           department: string
           id: string
           name: string
+          server_updated_at: string
           updated_at: string
           user_id: string
         }
         Insert: {
           archived_at?: string | null
           created_at?: string
+          deleted_at?: string | null
           department: string
           id?: string
           name: string
+          server_updated_at?: string
           updated_at?: string
           user_id?: string
         }
         Update: {
           archived_at?: string | null
           created_at?: string
+          deleted_at?: string | null
           department?: string
           id?: string
           name?: string
+          server_updated_at?: string
           updated_at?: string
           user_id?: string
         }
@@ -649,12 +727,14 @@ export type Database = {
       todos: {
         Row: {
           created_at: string
+          deleted_at: string | null
           description: string
           end_at: string | null
           id: string
           priority: string
           remind_at: string | null
           role: string
+          server_updated_at: string
           source_id: string | null
           source_type: string | null
           start_at: string | null
@@ -665,12 +745,14 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           description: string
           end_at?: string | null
           id?: string
           priority: string
           remind_at?: string | null
           role: string
+          server_updated_at?: string
           source_id?: string | null
           source_type?: string | null
           start_at?: string | null
@@ -681,12 +763,14 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           description?: string
           end_at?: string | null
           id?: string
           priority?: string
           remind_at?: string | null
           role?: string
+          server_updated_at?: string
           source_id?: string | null
           source_type?: string | null
           start_at?: string | null
@@ -717,9 +801,11 @@ export type Database = {
           content: string
           created_at: string
           date: string
+          deleted_at: string | null
           follow_up: string
           id: string
           rating: string
+          server_updated_at: string
           student_id: string
           tags: string[]
           updated_at: string
@@ -738,8 +824,10 @@ export type Database = {
           content: string
           created_at: string
           date: string
+          deleted_at: string | null
           id: string
           notes: string
+          server_updated_at: string
           status: string
           teacher_id: string
           title: string
@@ -773,14 +861,26 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      apply_workbench_change: {
+        Args: {
+          p_client_updated_at: string
+          p_deleted_at: Json
+          p_expected_user_id: string
+          p_record: Json
+          p_table: string
+        }
+        Returns: Json
+      }
       batch_teacher_records: {
         Args: { p_record: Json; p_teacher_ids: string[] }
         Returns: {
           content: string
           created_at: string
           date: string
+          deleted_at: string | null
           id: string
           notes: string
+          server_updated_at: string
           status: string
           teacher_id: string
           title: string
@@ -806,7 +906,9 @@ export type Database = {
         Args: { p_year: string }
         Returns: {
           created_at: string
+          deleted_at: string | null
           id: string
+          server_updated_at: string
           state: string
           teacher_id: string
           updated_at: string
@@ -824,12 +926,14 @@ export type Database = {
         Args: { p_todos: Json }
         Returns: {
           created_at: string
+          deleted_at: string | null
           description: string
           end_at: string | null
           id: string
           priority: string
           remind_at: string | null
           role: string
+          server_updated_at: string
           source_id: string | null
           source_type: string | null
           start_at: string | null
@@ -854,10 +958,12 @@ export type Database = {
         Args: { p_semester_id: string }
         Returns: {
           created_at: string
+          deleted_at: string | null
           end_date: string
           id: string
           is_active: boolean
           name: string
+          server_updated_at: string
           start_date: string
           total_weeks: number
           updated_at: string

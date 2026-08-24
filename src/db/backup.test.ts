@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 import type { Repositories } from './repositories';
 import { exportBackup, restoreBackup, validateBackup, type WorkbenchBackupV1 } from './backup';
 import { createTestRepositories } from '../test/database';
+import { WorkbenchDatabase } from './database';
+import { createRepositoryWriteLease, createSyncedRepositories } from './syncedRepositories';
 
 const timestamp = '2026-08-10T08:00:00.000Z';
 const restoredTodoId = '00000000-0000-4000-8000-000000000001';
@@ -61,6 +63,90 @@ describe('workbench backups', () => {
     await restoreBackup(backup, repositories);
 
     expect(await repositories.settings.list()).toEqual([{ key: 'theme', value: 'dark', updatedAt: timestamp }]);
+  });
+
+  test('round-trips a synchronized restore with fresh writes in dependency-safe queue order', async () => {
+    const backup = emptyBackup();
+    const ideaId = '00000000-0000-4000-8000-000000000101';
+    const semesterId = '00000000-0000-4000-8000-000000000102';
+    const courseId = '00000000-0000-4000-8000-000000000103';
+    const teacherId = '00000000-0000-4000-8000-000000000104';
+    const studentId = '00000000-0000-4000-8000-000000000105';
+    backup.tables.ideas.push({
+      id: ideaId, createdAt: timestamp, updatedAt: timestamp, content: '恢复灵感', tags: [], pinned: false, archivedAt: null,
+    });
+    backup.tables.semesters.push({
+      id: semesterId, createdAt: timestamp, updatedAt: timestamp, name: '恢复学期', startDate: '2026-09-01', endDate: '2027-01-15', totalWeeks: 18, isActive: true,
+    });
+    backup.tables.courses.push({
+      id: courseId, createdAt: timestamp, updatedAt: timestamp, semesterId, name: '恢复课程', location: '', teacher: '', weekday: 1, startTime: '09:00', endTime: '10:00', startWeek: 1, endWeek: 18, weekRule: { kind: 'every' }, notes: '',
+    });
+    backup.tables.teachers.push({
+      id: teacherId, createdAt: timestamp, updatedAt: timestamp, name: '恢复教师', department: '', archivedAt: null,
+    });
+    backup.tables.teacherYearSummaries.push({
+      id: '00000000-0000-4000-8000-000000000106', createdAt: timestamp, updatedAt: timestamp, teacherId, year: '2026', state: 'reported',
+    });
+    backup.tables.teacherRecords.push({
+      id: '00000000-0000-4000-8000-000000000107', createdAt: timestamp, updatedAt: timestamp, teacherId, year: '2026', type: 'work', date: '2026-08-24', title: '记录', content: '', status: 'completed', notes: '',
+    });
+    backup.tables.mentorships.push({
+      id: '00000000-0000-4000-8000-000000000108', createdAt: timestamp, updatedAt: timestamp, teacherId, academicYear: '2026', studentName: '学生', grade: '', major: '', topic: '主题', status: 'active', notes: '',
+    });
+    backup.tables.students.push({
+      id: studentId, createdAt: timestamp, updatedAt: timestamp, name: '恢复学生', program: '', cohort: '', contact: '', notes: '', archivedAt: null,
+    });
+    backup.tables.studentRecords.push({
+      id: '00000000-0000-4000-8000-000000000109', createdAt: timestamp, updatedAt: timestamp, studentId, date: '2026-08-24', category: 'task', rating: 'normal', content: '记录', followUp: '', tags: [],
+    });
+    backup.tables.todos.push({
+      id: '00000000-0000-4000-8000-000000000110', createdAt: timestamp, updatedAt: timestamp, title: '灵感待办', description: '', role: 'personal', startAt: null, endAt: null, remindAt: null, priority: 'normal', status: 'open', sourceType: 'idea', sourceId: ideaId,
+    });
+    backup.tables.researchItems.push({
+      id: '00000000-0000-4000-8000-000000000111', createdAt: timestamp, updatedAt: timestamp, title: '灵感研究', authors: '', source: '', year: 2026, urlOrDoi: '', tags: [], status: 'unread', rating: null, abstract: '', notes: '', sourceType: 'idea', sourceId: ideaId,
+    });
+    backup.tables.lessonPlans.push({
+      id: '00000000-0000-4000-8000-000000000112', createdAt: timestamp, updatedAt: timestamp, courseId, chapter: '灵感教案', objectives: '', outline: '', resources: '', activities: '', plannedDate: null, status: 'notStarted', sourceType: 'idea', sourceId: ideaId,
+    });
+    const db = new WorkbenchDatabase(`synchronized-backup-${crypto.randomUUID()}`);
+    const repositories = createSyncedRepositories(
+      db,
+      'user-1',
+      createRepositoryWriteLease('user-1'),
+      () => new Date('2026-08-24T12:00:00.000Z'),
+    );
+
+    try {
+      await restoreBackup(backup, repositories);
+      const operations = await db.syncOperations.orderBy('createdAt').toArray();
+      const kinds = operations.map(({ entityKind }) => entityKind);
+      const position = (kind: typeof kinds[number]) => kinds.indexOf(kind);
+
+      expect(operations.every(({ type, clientUpdatedAt }) => (
+        type === 'upsert' && clientUpdatedAt > timestamp
+      ))).toBe(true);
+      expect(operations.map(({ createdAt }) => createdAt).every((value, index, all) => (
+        index === 0 || value > all[index - 1]
+      ))).toBe(true);
+      expect(position('ideas')).toBeLessThan(position('todos'));
+      expect(position('ideas')).toBeLessThan(position('research_items'));
+      expect(position('ideas')).toBeLessThan(position('lesson_plans'));
+      expect(position('semesters')).toBeLessThan(position('courses'));
+      expect(position('courses')).toBeLessThan(position('lesson_plans'));
+      expect(position('teachers')).toBeLessThan(position('teacher_year_summaries'));
+      expect(position('teachers')).toBeLessThan(position('teacher_records'));
+      expect(position('teachers')).toBeLessThan(position('mentorships'));
+      expect(position('students')).toBeLessThan(position('student_records'));
+
+      const roundTrip = await exportBackup(repositories);
+      expect(roundTrip.tables.todos[0]).toMatchObject({ sourceType: 'idea', sourceId: ideaId });
+      expect(roundTrip.tables.courses[0]).toMatchObject({ semesterId });
+      expect(roundTrip.tables.lessonPlans[0]).toMatchObject({ courseId, sourceId: ideaId });
+      expect(roundTrip.tables.teacherRecords[0]).toMatchObject({ teacherId });
+      expect(roundTrip.tables.studentRecords[0]).toMatchObject({ studentId });
+    } finally {
+      await db.delete();
+    }
   });
 
   test('rolls back every table when any replacement fails', async () => {

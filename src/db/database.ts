@@ -15,6 +15,7 @@ import type {
   TeacherYearSummary,
   Todo,
 } from '../domain/entities';
+import type { SyncMetadata, SyncOperation } from '../sync/types';
 
 export class WorkbenchDatabase extends Dexie {
   todos!: Table<Todo, string>;
@@ -31,6 +32,8 @@ export class WorkbenchDatabase extends Dexie {
   students!: Table<Student, string>;
   studentRecords!: Table<StudentRecord, string>;
   settings!: Table<AppSetting, string>;
+  syncOperations!: Table<SyncOperation, string>;
+  syncMetadata!: Table<SyncMetadata, string>;
 
   constructor(name = 'personal-workbench') {
     super(name);
@@ -50,6 +53,11 @@ export class WorkbenchDatabase extends Dexie {
       students: 'id, name, archivedAt',
       studentRecords: 'id, studentId, date, category',
       settings: 'key',
+    });
+
+    this.version(2).stores({
+      syncOperations: 'id, userId, [userId+entityKind+entityId], createdAt',
+      syncMetadata: 'key',
     });
   }
 }

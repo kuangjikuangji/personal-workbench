@@ -1,13 +1,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createContext, type PropsWithChildren, useContext, useState } from 'react';
 import { HashRouter } from 'react-router-dom';
-import { WorkbenchDatabase } from '../db/database';
-import { createLocalRepositories } from '../db/localRepositories';
 import type { Repositories } from '../db/repositories';
 import { ReminderCoordinator } from '../features/todos/ReminderCoordinator';
 
-const defaultRepositories = createLocalRepositories(new WorkbenchDatabase());
 const RepositoryContext = createContext<Repositories | null>(null);
+
+export function createWorkbenchQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      mutations: { networkMode: 'always' },
+      queries: { networkMode: 'always' },
+    },
+  });
+}
 
 export function RepositoryProvider({
   children,
@@ -24,9 +30,10 @@ export function useRepositories(): Repositories {
 
 export function AppProviders({
   children,
-  repositories = defaultRepositories,
-}: PropsWithChildren<{ repositories?: Repositories }>) {
-  const [client] = useState(() => new QueryClient());
+  queryClient,
+  repositories,
+}: PropsWithChildren<{ queryClient?: QueryClient; repositories: Repositories }>) {
+  const [client] = useState(() => queryClient ?? createWorkbenchQueryClient());
 
   return (
     <RepositoryProvider repositories={repositories}>

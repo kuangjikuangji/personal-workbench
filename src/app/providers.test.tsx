@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { afterEach, expect, test } from 'vitest';
 import { createTestRepositories } from '../test/database';
-import { AppProviders } from './providers';
+import { AppProviders, createWorkbenchQueryClient } from './providers';
 
 afterEach(() => {
   window.location.hash = '';
@@ -20,4 +20,11 @@ test('reads application routes from the URL hash', async () => {
   );
 
   expect(await screen.findByRole('heading', { name: '待办路由' })).toBeVisible();
+});
+
+test('allows business mutations to run while the browser is offline', () => {
+  const client = createWorkbenchQueryClient();
+
+  expect(client.getDefaultOptions().mutations?.networkMode).toBe('always');
+  expect(client.getDefaultOptions().queries?.networkMode).toBe('always');
 });
