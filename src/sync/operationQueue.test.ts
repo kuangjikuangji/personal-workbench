@@ -236,4 +236,49 @@ describe('operation queue compaction', () => {
 
     expect(compactOperations([deleted])).toEqual([deleted]);
   });
+
+  test('keeps a local-create delete when its create is no longer in the current plan', () => {
+    const deleted = operation({
+      id: 'delete-after-create-ack',
+      type: 'delete',
+      record: null,
+      localCreate: true,
+      clientUpdatedAt: secondTime,
+      createdAt: secondTime,
+    });
+
+    expect(compactOperationBatches([deleted])).toEqual({
+      batches: [{ operation: deleted, sourceOperationIds: ['delete-after-create-ack'] }],
+      canceledOperationIds: [],
+    });
+  });
+
+  test('keeps a tombstone after an ambiguous create attempt', () => {
+    const attemptedCreate = operation({
+      id: 'attempted-create',
+      localCreate: true,
+      retryCount: 1,
+      lastError: 'Cloud sync failed.',
+    });
+    const deleted = operation({
+      id: 'delete-after-ambiguous-create',
+      type: 'delete',
+      record: null,
+      localCreate: true,
+      clientUpdatedAt: secondTime,
+      createdAt: secondTime,
+    });
+
+    expect(compactOperationBatches([attemptedCreate, deleted])).toEqual({
+      batches: [{
+        operation: expect.objectContaining({
+          id: 'delete-after-ambiguous-create',
+          type: 'delete',
+          localCreate: true,
+        }),
+        sourceOperationIds: ['attempted-create', 'delete-after-ambiguous-create'],
+      }],
+      canceledOperationIds: [],
+    });
+  });
 });

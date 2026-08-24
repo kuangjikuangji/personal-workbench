@@ -39,25 +39,36 @@ export type SyncEngine = {
   stop: () => Promise<void>;
 };
 
-function timestampValue(timestamp: string): number {
-  const value = Date.parse(timestamp);
-  return Number.isNaN(value) ? Number.NEGATIVE_INFINITY : value;
+function timestampValue(timestamp: string): bigint | null {
+  const match = timestamp.match(/^(.*?)(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/);
+  if (!match) return null;
+
+  const [, seconds, fraction = '', timezone] = match;
+  const wholeSecond = Date.parse(`${seconds}${timezone}`);
+  if (Number.isNaN(wholeSecond)) return null;
+
+  const nanoseconds = fraction.padEnd(9, '0').slice(0, 9);
+  return BigInt(wholeSecond) * 1_000_000n + BigInt(nanoseconds || '0');
 }
 
 function laterTimestamp(left: string, right: string | null): string {
   if (!right) return left;
-  return timestampValue(right) >= timestampValue(left) ? right : left;
+  return compareTimestamps(right, left) >= 0 ? right : left;
 }
 
 function compareVersions(left: Version, right: Version): number {
-  const timeDifference = timestampValue(left.modifiedAt) - timestampValue(right.modifiedAt);
+  const timeDifference = compareTimestamps(left.modifiedAt, right.modifiedAt);
   if (timeDifference !== 0) return timeDifference;
   if (left.deleted === right.deleted) return 0;
   return left.deleted ? 1 : -1;
 }
 
 function compareTimestamps(left: string, right: string): number {
-  return timestampValue(left) - timestampValue(right);
+  const leftValue = timestampValue(left);
+  const rightValue = timestampValue(right);
+  if (leftValue === null || rightValue === null) return left.localeCompare(right);
+  if (leftValue === rightValue) return 0;
+  return leftValue > rightValue ? 1 : -1;
 }
 
 function isVersion(value: unknown): value is Version {
@@ -90,7 +101,7 @@ function remoteVersion(change: CloudChange): Version {
   return {
     modifiedAt,
     deleted: change.deletedAt !== null
-      && timestampValue(change.deletedAt) >= timestampValue(updatedAt),
+      && compareTimestamps(change.deletedAt, updatedAt) >= 0,
   };
 }
 

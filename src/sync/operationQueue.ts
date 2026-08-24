@@ -3,6 +3,7 @@ import type { SyncOperation } from './types';
 type PendingOperation = {
   operation: SyncOperation;
   createdLocally: boolean;
+  cancelableLocalCreate: boolean;
   sourceOperationIds: string[];
   firstCreatedAt: string;
 };
@@ -32,9 +33,12 @@ export function compactOperationBatches(operations: SyncOperation[]): CompactedO
     const key = operationKey(operation);
     const previous = pending.get(key);
     const createdLocally = previous?.createdLocally ?? operation.localCreate;
+    const cancelableLocalCreate = previous
+      ? previous.cancelableLocalCreate && operation.retryCount === 0
+      : operation.type === 'upsert' && operation.localCreate && operation.retryCount === 0;
     const sourceOperationIds = [...(previous?.sourceOperationIds ?? []), operation.id];
 
-    if (operation.type === 'delete' && createdLocally) {
+    if (operation.type === 'delete' && previous?.cancelableLocalCreate && operation.retryCount === 0) {
       pending.delete(key);
       canceledOperationIds.push(...sourceOperationIds);
       continue;
@@ -45,6 +49,7 @@ export function compactOperationBatches(operations: SyncOperation[]): CompactedO
         ? operation
         : { ...operation, localCreate: createdLocally },
       createdLocally,
+      cancelableLocalCreate,
       sourceOperationIds,
       firstCreatedAt: previous?.firstCreatedAt ?? operation.createdAt,
     });

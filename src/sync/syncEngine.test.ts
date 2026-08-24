@@ -558,6 +558,24 @@ describe('sync engine startup and remote merge', () => {
     }));
     expect(await db.teachers.get('teacher-1')).toEqual(teacher(restoredAt, '新恢复'));
   });
+
+  test('preserves PostgreSQL microsecond order for equal client timestamps', async () => {
+    const db = createDatabase();
+    const sameClientTime = '2026-08-23T11:00:00.000Z';
+
+    await applyRemoteChange(db, teacherChange({
+      value: teacher(sameClientTime, '先到版本'),
+      clientUpdatedAt: sameClientTime,
+      serverUpdatedAt: '2026-08-23T11:00:01.000001Z',
+    }));
+    await applyRemoteChange(db, teacherChange({
+      value: teacher(sameClientTime, '后到版本'),
+      clientUpdatedAt: sameClientTime,
+      serverUpdatedAt: '2026-08-23T11:00:01.000002Z',
+    }));
+
+    expect(await db.teachers.get('teacher-1')).toEqual(teacher(sameClientTime, '后到版本'));
+  });
 });
 
 describe('queue acknowledgement', () => {
