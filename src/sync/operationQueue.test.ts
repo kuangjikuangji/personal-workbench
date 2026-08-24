@@ -59,7 +59,7 @@ describe('operation queue compaction', () => {
     });
   });
 
-  test('reports every canceled id for an unsynchronized create followed by delete', () => {
+  test('preserves an unsynchronized create and delete in cloud delivery order', () => {
     const created = operation({ id: 'created-operation', localCreate: true });
     const deleted = operation({
       id: 'deleted-operation', type: 'delete', record: null,
@@ -67,8 +67,27 @@ describe('operation queue compaction', () => {
     });
 
     expect(compactOperationBatches([created, deleted])).toEqual({
-      batches: [],
-      canceledOperationIds: ['created-operation', 'deleted-operation'],
+      batches: [
+        { operation: created, sourceOperationIds: ['created-operation'] },
+        { operation: deleted, sourceOperationIds: ['deleted-operation'] },
+      ],
+      canceledOperationIds: [],
+    });
+  });
+
+  test('preserves create and delete as ordered cloud operations when delivery is unprovable', () => {
+    const created = operation({ id: 'created-operation', localCreate: true });
+    const deleted = operation({
+      id: 'deleted-operation', type: 'delete', record: null, localCreate: true,
+      clientUpdatedAt: secondTime, createdAt: secondTime,
+    });
+
+    expect(compactOperationBatches([created, deleted])).toEqual({
+      batches: [
+        { operation: created, sourceOperationIds: ['created-operation'] },
+        { operation: deleted, sourceOperationIds: ['deleted-operation'] },
+      ],
+      canceledOperationIds: [],
     });
   });
 
@@ -182,7 +201,7 @@ describe('operation queue compaction', () => {
     });
   });
 
-  test('cancels an unsynced create followed by a delete', () => {
+  test('does not cancel an unsynced create followed by a delete', () => {
     const created = operation({
       localCreate: true,
       record: {
@@ -201,7 +220,7 @@ describe('operation queue compaction', () => {
       createdAt: secondTime,
     });
 
-    expect(compactOperations([created, deleted])).toEqual([]);
+    expect(compactOperations([created, deleted])).toEqual([created, deleted]);
   });
 
   test('keeps a tombstone after updating an existing record whose audit timestamps are equal', () => {
@@ -270,14 +289,10 @@ describe('operation queue compaction', () => {
     });
 
     expect(compactOperationBatches([attemptedCreate, deleted])).toEqual({
-      batches: [{
-        operation: expect.objectContaining({
-          id: 'delete-after-ambiguous-create',
-          type: 'delete',
-          localCreate: true,
-        }),
-        sourceOperationIds: ['attempted-create', 'delete-after-ambiguous-create'],
-      }],
+      batches: [
+        { operation: attemptedCreate, sourceOperationIds: ['attempted-create'] },
+        { operation: deleted, sourceOperationIds: ['delete-after-ambiguous-create'] },
+      ],
       canceledOperationIds: [],
     });
   });

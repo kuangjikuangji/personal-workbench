@@ -620,7 +620,7 @@ describe('queue acknowledgement', () => {
     await engine.stop();
   });
 
-  test('dequeues a compacted local create-delete cancellation without contacting cloud', async () => {
+  test('sends local create then delete when prior delivery cannot be proven absent', async () => {
     const db = createDatabase();
     await markCurrentOwner(db);
     await db.syncOperations.bulkAdd([
@@ -630,13 +630,18 @@ describe('queue acknowledgement', () => {
         clientUpdatedAt: secondTime, createdAt: secondTime,
       }),
     ]);
-    const apply = vi.fn<CloudGateway['apply']>();
+    const apply = vi.fn<CloudGateway['apply']>(async (pending) => ({
+      applied: true,
+      change: pending.type === 'delete'
+        ? teacherChange({ deletedAt: secondTime, serverUpdatedAt: secondTime })
+        : teacherChange({ serverUpdatedAt: firstTime }),
+    }));
     const controls = createGateway({ apply });
     const engine = createSyncEngine({ db, gateway: controls.gateway, userId, now, online: () => true });
 
     await engine.start();
 
-    expect(apply).not.toHaveBeenCalled();
+    expect(apply.mock.calls.map(([pending]) => pending.id)).toEqual(['local-create', 'local-delete']);
     expect(await db.syncOperations.count()).toBe(0);
     expect(syncStore.getState().status).toBe('synced');
     await engine.stop();
