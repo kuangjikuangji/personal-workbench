@@ -269,6 +269,32 @@ test('allows offline startup only from an existing mirror owned by the same user
   finishStart?.();
 });
 
+test('reveals a completed same-user mirror immediately while online reconciliation runs in the background', async () => {
+  const database = createDatabase();
+  await markCompletedMirror(database);
+  let finishStart: (() => void) | undefined;
+  const starting = new Promise<boolean>((resolve) => { finishStart = () => resolve(false); });
+  const syncEngine = engine({ start: vi.fn(() => starting) });
+
+  render(
+    <AuthProvider backend={authBackend()}>
+      <SyncProvider
+        dependencies={dependencies(database, syncEngine, { online: () => true })}
+        identity={identity}
+      >
+        {() => <div>cached online mirror</div>}
+      </SyncProvider>
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByText('cached online mirror')).toBeInTheDocument();
+  expect(syncEngine.start).toHaveBeenCalledTimes(1);
+  finishStart?.();
+  await act(async () => { await starting; });
+  expect(screen.getByText('cached online mirror')).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
 test('keeps a same-user offline mirror closed until a completed full sync is verified', async () => {
   const database = createDatabase();
   await database.syncMetadata.put({

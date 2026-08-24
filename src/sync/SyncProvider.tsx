@@ -105,7 +105,7 @@ export function SyncProvider({
 
   useEffect(() => {
     let active = true;
-    let offlineMirrorReady = false;
+    let completedMirrorReady = false;
     let stopPromise: Promise<void> | null = null;
     let cleanupPromise: Promise<void> | null = null;
     const gateway = buildGateway(client, userId);
@@ -143,16 +143,15 @@ export function SyncProvider({
         database.syncMetadata.get(lastFullSyncMetadataKey),
       ]);
       if (!active) return;
-      offlineMirrorReady = !online()
-        && owner?.value === userId
+      completedMirrorReady = owner?.value === userId
         && isCompletedMirror(completedSync?.value, userId);
-      if (offlineMirrorReady) setStartup({ userId, status: 'ready' });
+      if (completedMirrorReady) setStartup({ userId, status: 'ready' });
 
       const reconciled = await engine.start();
-      if (!active || offlineMirrorReady) return;
+      if (!active || completedMirrorReady) return;
       setStartup({ userId, status: reconciled ? 'ready' : 'error' });
     })().catch(() => {
-      if (active && !offlineMirrorReady) setStartup({ userId, status: 'error' });
+      if (active && !completedMirrorReady) setStartup({ userId, status: 'error' });
     });
 
     return () => {
