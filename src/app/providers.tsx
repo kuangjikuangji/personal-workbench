@@ -6,6 +6,15 @@ import { ReminderCoordinator } from '../features/todos/ReminderCoordinator';
 
 const RepositoryContext = createContext<Repositories | null>(null);
 
+export function createWorkbenchQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      mutations: { networkMode: 'always' },
+      queries: { networkMode: 'always' },
+    },
+  });
+}
+
 export function RepositoryProvider({
   children,
   repositories,
@@ -24,7 +33,7 @@ export function AppProviders({
   queryClient,
   repositories,
 }: PropsWithChildren<{ queryClient?: QueryClient; repositories: Repositories }>) {
-  const [client] = useState(() => queryClient ?? new QueryClient());
+  const [client] = useState(() => queryClient ?? createWorkbenchQueryClient());
 
   return (
     <RepositoryProvider repositories={repositories}>

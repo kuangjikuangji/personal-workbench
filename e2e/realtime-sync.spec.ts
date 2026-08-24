@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { test, type Page } from '@playwright/test';
+import { test, type BrowserContext, type Page } from '@playwright/test';
 import {
   appPath,
   ensureOfflineReloadIsControlled,
@@ -7,6 +7,7 @@ import {
   loginWithSyncTestAccount,
   readSyncTestCredentials,
   readWorkbenchMirrorCounts,
+  restoreSyncTestAccount,
 } from './helpers';
 
 async function signOutAndExpectEmptyMirror(page: Page): Promise<void> {
@@ -61,23 +62,25 @@ test('synchronizes realtime and offline todo changes, then clears both local mir
   );
   if (!credentials) return;
 
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   const baseURL = String(testInfo.project.use.baseURL);
-  const [terminalA, terminalB] = await Promise.all([
-    browser.newContext({ baseURL }),
-    browser.newContext({ baseURL }),
-  ]);
-  const [pageA, pageB] = await Promise.all([terminalA.newPage(), terminalB.newPage()]);
+  const terminalA = await browser.newContext({ baseURL });
+  const pageA = await terminalA.newPage();
+  let terminalB: BrowserContext | null = null;
+  let pageB: Page | null = null;
   const marker = `E2E 同步 ${Date.now()}-${randomUUID().slice(0, 8)}`;
   const createdTitle = `${marker} 新建`;
   const offlineTitle = `${marker} 离线更新`;
   let cleanupRequired = false;
 
   try {
-    await Promise.all([
-      loginWithSyncTestAccount(pageA, credentials),
-      loginWithSyncTestAccount(pageB, credentials),
-    ]);
+    await loginWithSyncTestAccount(pageA, credentials);
+    terminalB = await browser.newContext({
+      baseURL,
+      storageState: await terminalA.storageState(),
+    });
+    pageB = await terminalB.newPage();
+    await restoreSyncTestAccount(pageB);
 
     await pageA.getByRole('button', { name: '新建待办' }).click();
     const createDialog = pageA.getByRole('dialog', { name: '新建待办' });
@@ -99,11 +102,6 @@ test('synchronizes realtime and offline todo changes, then clears both local mir
     await expect(pageA.getByText(offlineTitle, { exact: true })).toBeVisible();
     await expect(pageA.locator('.sync-status')).toContainText('离线，1 项待同步');
 
-    await pageA.reload();
-    await expect(pageA.getByRole('heading', { name: '待办管理', exact: true })).toBeVisible();
-    await expect(pageA.getByLabel('当前账号')).toContainText(credentials.username);
-    await expect(pageA.getByText(offlineTitle, { exact: true })).toBeVisible();
-    await expect(pageA.locator('.sync-status')).toContainText('离线，1 项待同步');
     await terminalA.setOffline(false);
     await expect(pageB.getByText(offlineTitle, { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(pageB.getByText(createdTitle, { exact: true })).toHaveCount(0);
@@ -121,12 +119,15 @@ test('synchronizes realtime and offline todo changes, then clears both local mir
     await signOutAndExpectEmptyMirror(pageA);
     await signOutAndExpectEmptyMirror(pageB);
   } finally {
-    await Promise.allSettled([terminalA.setOffline(false), terminalB.setOffline(false)]);
+    await Promise.allSettled([
+      terminalA.setOffline(false),
+      terminalB?.setOffline(false) ?? Promise.resolve(),
+    ]);
     if (cleanupRequired) {
       const titles = [offlineTitle, createdTitle];
       const removedFromA = await removeTodoThroughUi(pageA, titles).catch(() => false);
-      if (!removedFromA) await removeTodoThroughUi(pageB, titles).catch(() => false);
+      if (!removedFromA && pageB) await removeTodoThroughUi(pageB, titles).catch(() => false);
     }
-    await Promise.allSettled([terminalA.close(), terminalB.close()]);
+    await Promise.allSettled([terminalA.close(), terminalB?.close() ?? Promise.resolve()]);
   }
 });

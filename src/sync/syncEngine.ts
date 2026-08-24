@@ -445,11 +445,6 @@ export function createSyncEngine({
         if (outcome === 'stopped' || !active) return false;
         if (outcome === 'timed-out') {
           channelReady = false;
-          try {
-            await releaseSubscription(subscription);
-          } catch {
-            // The readiness failure remains the actionable error.
-          }
           throw new CloudGatewayError('network');
         }
 
@@ -461,11 +456,10 @@ export function createSyncEngine({
         return active;
       } catch (error) {
         channelReady = false;
-        try {
-          await releaseSubscription(subscription);
-        } catch {
-          // Preserve the original readiness or transport failure.
-        }
+        // A broken transport can also leave channel removal unresolved. Detach
+        // it immediately so the readiness deadline remains a true upper bound;
+        // a retry may safely create a fresh channel while cleanup finishes.
+        void releaseSubscription(subscription).catch(() => undefined);
         throw error;
       } finally {
         if (timeout !== null) clearTimeout(timeout);

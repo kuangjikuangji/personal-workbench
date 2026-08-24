@@ -381,6 +381,35 @@ describe('sync engine startup and remote merge', () => {
     await engine.stop();
   });
 
+  test('does not let a hanging channel cleanup extend the realtime readiness deadline', async () => {
+    const db = createDatabase();
+    await markCurrentOwner(db);
+    const gateway: CloudGateway = {
+      pullAll: async () => [],
+      apply: async () => { throw new Error('unused apply'); },
+      subscribe: () => ({
+        ready: new Promise<void>(() => undefined),
+        unsubscribe: () => new Promise<void>(() => undefined),
+      }),
+    };
+    const engine = createSyncEngine({
+      db,
+      gateway,
+      userId,
+      now,
+      online: () => true,
+      realtimeReadyTimeoutMs: 20,
+    });
+
+    const result = await Promise.race([
+      engine.start(),
+      new Promise<'unbounded'>((resolve) => setTimeout(() => resolve('unbounded'), 100)),
+    ]);
+
+    expect(result).toBe(false);
+    expect(syncStore.getState()).toMatchObject({ status: 'error' });
+  });
+
   test('fails startup safely when the realtime observer cannot be created', async () => {
     const db = createDatabase();
     await markCurrentOwner(db);

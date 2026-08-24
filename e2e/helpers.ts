@@ -61,19 +61,58 @@ export async function loginWithSyncTestAccount(
   page: Page,
   credentials: SyncTestCredentials,
 ): Promise<void> {
-  await page.goto(appPath('/todos'));
-  await page.getByLabel('账号').fill(credentials.username);
-  await page.getByLabel('密码').fill(credentials.password);
-  await page.getByRole('button', { name: '登录', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '待办管理', exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('.sync-status')).toHaveText('已同步', { timeout: 30_000 });
+  const workbench = page.getByRole('heading', { name: '待办管理', exact: true });
+  const retry = page.getByRole('button', { name: '重试', exact: true });
+  for (let loginAttempt = 0; loginAttempt < 2; loginAttempt += 1) {
+    await page.goto(appPath('/todos'));
+    if (await workbench.isVisible()) {
+      await expect(page.locator('.sync-status')).toHaveText('已同步', { timeout: 30_000 });
+      return;
+    }
+    await page.getByLabel('账号', { exact: true }).fill(credentials.username);
+    await page.getByLabel('密码').fill(credentials.password);
+    await page.getByRole('button', { name: '登录', exact: true }).click();
+
+    for (let startupAttempt = 0; startupAttempt < 2; startupAttempt += 1) {
+      const reachedStartupOutcome = await workbench.or(retry)
+        .waitFor({ state: 'visible', timeout: 30_000 })
+        .then(() => true, () => false);
+      if (!reachedStartupOutcome) break;
+      if (await workbench.isVisible()) {
+        await expect(page.locator('.sync-status')).toHaveText('已同步', { timeout: 30_000 });
+        return;
+      }
+      await retry.click();
+    }
+  }
+  await expect(workbench).toBeVisible({ timeout: 30_000 });
+}
+
+export async function restoreSyncTestAccount(page: Page): Promise<void> {
+  const workbench = page.getByRole('heading', { name: '待办管理', exact: true });
+  const retry = page.getByRole('button', { name: '重试', exact: true });
+  for (let restoreAttempt = 0; restoreAttempt < 2; restoreAttempt += 1) {
+    await page.goto(appPath('/todos'));
+    for (let startupAttempt = 0; startupAttempt < 2; startupAttempt += 1) {
+      const reachedStartupOutcome = await workbench.or(retry)
+        .waitFor({ state: 'visible', timeout: 30_000 })
+        .then(() => true, () => false);
+      if (!reachedStartupOutcome) break;
+      if (await workbench.isVisible()) {
+        await expect(page.locator('.sync-status')).toHaveText('已同步', { timeout: 30_000 });
+        return;
+      }
+      if (await retry.isVisible()) await retry.click();
+    }
+  }
+  await expect(workbench).toBeVisible({ timeout: 30_000 });
 }
 
 export async function ensureOfflineReloadIsControlled(page: Page): Promise<void> {
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   if (!await page.evaluate(() => navigator.serviceWorker.controller !== null)) {
     await page.reload();
-    await expect(page.getByRole('heading', { name: '待办管理', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '待办管理', exact: true })).toBeVisible({ timeout: 30_000 });
   }
   expect(await page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
 }

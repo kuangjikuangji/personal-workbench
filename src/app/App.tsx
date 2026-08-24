@@ -1,6 +1,5 @@
-import { QueryClient } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
-import { AppProviders } from './providers';
+import { AppProviders, createWorkbenchQueryClient } from './providers';
 import { AppRouter } from './router';
 import { WorkbenchDatabase } from '../db/database';
 import { AuthGate } from '../features/auth/AuthGate';
@@ -25,7 +24,7 @@ function AuthenticatedWorkbench({
   syncDependencies: SyncProviderDependencies | null;
 }) {
   const auth = useAuth();
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(createWorkbenchQueryClient);
   const refreshQueries = useCallback<RemoteChangeListener>(() => {
     void queryClient.invalidateQueries();
   }, [queryClient]);
